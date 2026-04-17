@@ -197,6 +197,21 @@ addActionHandler('toggleStatistics', (global, actions, payload): ActionReturnTyp
   }, tabId);
 });
 
+addActionHandler('toggleOpenclawModal', (global, actions, payload): ActionReturnType => {
+  const { tabId = getCurrentTabId() } = payload || {};
+  const tabState = selectTabState(global, tabId);
+  return updateTabState(global, {
+    isOpenclawModalOpen: !tabState.isOpenclawModalOpen,
+  }, tabId);
+});
+
+addActionHandler('closeOpenclawModal', (global, actions, payload): ActionReturnType => {
+  const { tabId = getCurrentTabId() } = payload || {};
+  return updateTabState(global, {
+    isOpenclawModalOpen: false,
+  }, tabId);
+});
+
 addActionHandler('toggleMessageStatistics', (global, actions, payload): ActionReturnType => {
   const { tabId = getCurrentTabId(), messageId } = payload || {};
   return updateTabState(global, {

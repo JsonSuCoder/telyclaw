@@ -1,0 +1,12 @@
+/Users/qmk/work/telyclaw/telegram-tt/tauri/target/debug/deps/libosakit-7c682ac146b239cd.rmeta: /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osakit-0.3.1/src/lib.rs /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osakit-0.3.1/src/export/mod.rs /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osakit-0.3.1/src/export/script.rs /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osakit-0.3.1/src/export/value/mod.rs /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osakit-0.3.1/src/export/value/input.rs /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osakit-0.3.1/src/export/value/output.rs /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osakit-0.3.1/src/export/macros.rs /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osakit-0.3.1/src/../README.md
+
+/Users/qmk/work/telyclaw/telegram-tt/tauri/target/debug/deps/osakit-7c682ac146b239cd.d: /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osakit-0.3.1/src/lib.rs /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osakit-0.3.1/src/export/mod.rs /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osakit-0.3.1/src/export/script.rs /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osakit-0.3.1/src/export/value/mod.rs /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osakit-0.3.1/src/export/value/input.rs /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osakit-0.3.1/src/export/value/output.rs /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osakit-0.3.1/src/export/macros.rs /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osakit-0.3.1/src/../README.md
+
+/Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osakit-0.3.1/src/lib.rs:
+/Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osakit-0.3.1/src/export/mod.rs:
+/Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osakit-0.3.1/src/export/script.rs:
+/Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osakit-0.3.1/src/export/value/mod.rs:
+/Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osakit-0.3.1/src/export/value/input.rs:
+/Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osakit-0.3.1/src/export/value/output.rs:
+/Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osakit-0.3.1/src/export/macros.rs:
+/Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osakit-0.3.1/src/../README.md:

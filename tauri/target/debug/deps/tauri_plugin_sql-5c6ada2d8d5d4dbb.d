@@ -1,0 +1,10 @@
+/Users/qmk/work/telyclaw/telegram-tt/tauri/target/debug/deps/libtauri_plugin_sql-5c6ada2d8d5d4dbb.rmeta: /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-sql-2.4.0/src/lib.rs /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-sql-2.4.0/src/commands.rs /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-sql-2.4.0/src/decode/mod.rs /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-sql-2.4.0/src/decode/sqlite.rs /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-sql-2.4.0/src/error.rs /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-sql-2.4.0/src/wrapper.rs
+
+/Users/qmk/work/telyclaw/telegram-tt/tauri/target/debug/deps/tauri_plugin_sql-5c6ada2d8d5d4dbb.d: /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-sql-2.4.0/src/lib.rs /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-sql-2.4.0/src/commands.rs /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-sql-2.4.0/src/decode/mod.rs /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-sql-2.4.0/src/decode/sqlite.rs /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-sql-2.4.0/src/error.rs /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-sql-2.4.0/src/wrapper.rs
+
+/Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-sql-2.4.0/src/lib.rs:
+/Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-sql-2.4.0/src/commands.rs:
+/Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-sql-2.4.0/src/decode/mod.rs:
+/Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-sql-2.4.0/src/decode/sqlite.rs:
+/Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-sql-2.4.0/src/error.rs:
+/Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-sql-2.4.0/src/wrapper.rs:

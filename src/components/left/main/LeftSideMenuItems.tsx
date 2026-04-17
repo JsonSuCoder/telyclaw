@@ -83,8 +83,13 @@ const LeftSideMenuItems = ({
     openChatByUsername,
     openUrl,
     openChatWithInfo,
+    toggleOpenclawModal,
   } = getActions();
   const lang = useLang();
+
+  const handleOpenclawClick = useLastCallback(() => {
+    toggleOpenclawModal();
+  });
 
   const animationLevelValue = animationLevel !== ANIMATION_LEVEL_MIN
     ? (animationLevel === ANIMATION_LEVEL_MAX ? 'max' : 'mid') : 'min';
@@ -199,6 +204,12 @@ const LeftSideMenuItems = ({
         onClick={onSelectSettings}
       >
         {lang('MenuSettings')}
+      </MenuItem>
+      <MenuItem
+        icon="ai"
+        onClick={handleOpenclawClick}
+      >
+        Openclaw
       </MenuItem>
       <NestedMenuItem
         icon="more"

@@ -1,10 +1,14 @@
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
+use std::fs;
+use std::path::PathBuf;
 
 use serde_json::json;
 use tauri::{Emitter, LogicalPosition, Manager, webview::DownloadEvent};
 use url::Url;
 use uuid::Uuid;
+
+use tauri_plugin_autostart::{MacosLauncher, ManagerExt as _};
 
 mod deeplink;
 use deeplink::Deeplink;
@@ -107,7 +111,23 @@ pub fn run() {
     .plugin(tauri_plugin_log::Builder::default().build())
     .plugin(tauri_plugin_window_state::Builder::default().build())
     .plugin(tauri_plugin_deep_link::init())
-    .plugin(tauri_plugin_process::init());
+    .plugin(tauri_plugin_process::init())
+    .plugin(tauri_plugin_sql::Builder::default().build())
+    .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--auto-launched"])))
+    .setup(|app| {
+      let app_handle = app.handle().clone();
+      tauri::async_runtime::spawn(async move {
+        match OpenClawDb::new(&app_handle).await {
+          Ok(db) => {
+            app_handle.manage(OpenClawState { db });
+          }
+          Err(e) => {
+            eprintln!("Failed to initialize OpenClaw DB: {}", e);
+          }
+        }
+      });
+      Ok(())
+    });
 
   let app = app.on_window_event(|window, event| match event {
     tauri::WindowEvent::CloseRequested { api, .. } => {
@@ -181,7 +201,39 @@ pub fn run() {
     set_window_title,
     open_new_window_cmd,
     save_current_url,
-    set_menu_translations
+    set_menu_translations,
+    auto_launch_get,
+    auto_launch_set,
+    prevent_sleep_get,
+    prevent_sleep_set,
+    store_get,
+    store_set,
+    store_remove,
+    openclaw_engine_get_status,
+    openclaw_engine_install,
+    openclaw_engine_retry_install,
+    openclaw_engine_restart_gateway,
+    openclaw_session_policy_get,
+    openclaw_session_policy_set,
+    cowork_get_config,
+    cowork_set_config,
+    cowork_list_sessions,
+    cowork_get_session,
+    cowork_start_session,
+    cowork_continue_session,
+    cowork_stop_session,
+    cowork_delete_session,
+    cowork_delete_sessions,
+    cowork_list_messages,
+    cowork_add_message,
+    cowork_update_message,
+    agents_list,
+    agents_get,
+    agents_create,
+    mcp_list,
+    mcp_create,
+    app_get_version,
+    app_get_system_locale
   ]);
 
   app
@@ -290,6 +342,163 @@ fn save_current_url(window: tauri::WebviewWindow) {
     }
   }
 }
+
+#[derive(serde::Serialize)]
+struct AutoLaunchStatus {
+  enabled: bool,
+}
+
+#[tauri::command]
+fn auto_launch_get() -> AutoLaunchStatus {
+  AutoLaunchStatus { enabled: false }
+}
+
+#[tauri::command]
+fn auto_launch_set(enabled: bool) -> Result<(), String> {
+  println!("auto_launch_set: {}", enabled);
+  Ok(())
+}
+
+#[tauri::command]
+fn prevent_sleep_get() -> AutoLaunchStatus {
+  // TODO: implement real prevent sleep status
+  AutoLaunchStatus { enabled: false }
+}
+
+#[tauri::command]
+fn prevent_sleep_set(enabled: bool) -> Result<(), String> {
+  // TODO: implement real prevent sleep
+  println!("prevent_sleep_set: {}", enabled);
+  Ok(())
+}
+
+#[tauri::command]
+fn store_get(app: tauri::AppHandle, key: String) -> Result<serde_json::Value, String> {
+  let path = app.path().app_data_dir().map_err(|e| e.to_string())?.join("store.json");
+  if !path.exists() {
+    return Ok(serde_json::Value::Null);
+  }
+  let content = fs::read_to_string(path).map_err(|e| e.to_string())?;
+  let store: HashMap<String, serde_json::Value> = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+  Ok(store.get(&key).cloned().unwrap_or(serde_json::Value::Null))
+}
+
+#[tauri::command]
+fn store_set(app: tauri::AppHandle, key: String, value: serde_json::Value) -> Result<(), String> {
+  let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+  if !data_dir.exists() {
+    fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
+  }
+  let path = data_dir.join("store.json");
+  let mut store: HashMap<String, serde_json::Value> = if path.exists() {
+    let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    serde_json::from_str(&content).unwrap_or_default()
+  } else {
+    HashMap::new()
+  };
+  store.insert(key, value);
+  let content = serde_json::to_string(&store).map_err(|e| e.to_string())?;
+  fs::write(path, content).map_err(|e| e.to_string())?;
+  Ok(())
+}
+
+#[tauri::command]
+fn store_remove(app: tauri::AppHandle, key: String) -> Result<(), String> {
+  let path = app.path().app_data_dir().map_err(|e| e.to_string())?;
+  let path = path.join("store.json");
+  if !path.exists() {
+    return Ok(());
+  }
+  let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+  let mut store: HashMap<String, serde_json::Value> = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+  store.remove(&key);
+  let content = serde_json::to_string(&store).map_err(|e| e.to_string())?;
+  fs::write(path, content).map_err(|e| e.to_string())?;
+  Ok(())
+}
+
+#[tauri::command]
+fn openclaw_engine_install() -> Result<(), String> {
+  Ok(())
+}
+
+#[tauri::command]
+fn openclaw_engine_retry_install() -> Result<(), String> {
+  Ok(())
+}
+
+#[tauri::command]
+fn openclaw_engine_restart_gateway() -> Result<(), String> {
+  Ok(())
+}
+
+#[tauri::command]
+fn openclaw_session_policy_get() -> serde_json::Value {
+  json!({ "keepAlive": "30d" })
+}
+
+#[tauri::command]
+fn openclaw_session_policy_set(config: serde_json::Value) -> Result<(), String> {
+  println!("openclaw_session_policy_set: {:?}", config);
+  Ok(())
+}
+
+#[tauri::command]
+fn cowork_get_config() -> serde_json::Value {
+  json!({})
+}
+
+#[tauri::command]
+fn cowork_set_config(config: serde_json::Value) -> Result<(), String> {
+  println!("cowork_set_config: {:?}", config);
+  Ok(())
+}
+
+#[tauri::command]
+fn cowork_continue_session(options: serde_json::Value) -> Result<(), String> {
+  println!("cowork_continue_session: {:?}", options);
+  Ok(())
+}
+
+#[tauri::command]
+fn cowork_stop_session(session_id: String) -> Result<(), String> {
+  println!("cowork_stop_session: {}", session_id);
+  Ok(())
+}
+
+#[tauri::command]
+fn cowork_delete_sessions(session_ids: Vec<String>) -> Result<(), String> {
+  println!("cowork_delete_sessions: {:?}", session_ids);
+  Ok(())
+}
+
+#[tauri::command]
+fn app_get_version(app: tauri::AppHandle) -> String {
+  app.package_info().version.to_string()
+}
+
+#[tauri::command]
+fn app_get_system_locale() -> String {
+  "zh-CN".to_string()
+}
+
+mod openclaw;
+use openclaw::{
+    db::OpenClawDb, OpenClawState, 
+    openclaw_engine_get_status, 
+    cowork_list_sessions,
+    cowork_get_session,
+    cowork_start_session,
+    cowork_delete_session,
+    cowork_list_messages,
+    cowork_add_message,
+    cowork_update_message,
+    agents_list,
+    agents_get,
+    agents_create,
+    mcp_list,
+    mcp_create
+};
 
 pub(crate) fn open_new_window(
   app: tauri::AppHandle,

@@ -84,6 +84,7 @@ import DraftRecipientPicker from './DraftRecipientPicker.async';
 import FoldersSidebar from './FoldersSidebar';
 import ForwardRecipientPicker from './ForwardRecipientPicker.async';
 import GameModal from './GameModal';
+import OpenclawModal from './OpenclawModal';
 import HistoryCalendar from './HistoryCalendar.async';
 import NewContactModal from './NewContactModal.async';
 import PremiumLimitReachedModal from './premium/common/PremiumLimitReachedModal.async';
@@ -605,6 +606,7 @@ const Main = ({
         isByPhoneNumber={newContactByPhoneNumber}
       />
       <GameModal openedGame={openedGame} gameTitle={gameTitle} />
+      <OpenclawModal />
       <DownloadManager />
       <ConfettiContainer />
       {IS_WAVE_TRANSFORM_SUPPORTED && <WaveContainer />}

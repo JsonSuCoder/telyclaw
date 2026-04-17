@@ -125,7 +125,51 @@ export default function createConfig(
         {
           test: /\.(ts|tsx|js|mjs|cjs)$/,
           loader: 'babel-loader',
-          exclude: /node_modules/,
+          include: path.resolve(__dirname, 'src/openclaw/src'),
+          exclude: [
+            path.resolve(__dirname, 'src/openclaw/src/main'),
+            path.resolve(__dirname, 'src/openclaw/scripts'),
+          ],
+          options: {
+            presets: [
+              '@babel/typescript',
+              '@babel/preset-env',
+              [
+                '@babel/preset-react',
+                {
+                  runtime: 'automatic',
+                  importSource: 'react',
+                },
+              ],
+            ],
+            plugins: [
+              APP_ENV === 'test' && !APP_MOCKED_CLIENT ? 'babel-plugin-transform-import-meta' : undefined,
+            ].filter(Boolean),
+          },
+        },
+        {
+          test: /\.(ts|tsx|js|mjs|cjs)$/,
+          loader: 'babel-loader',
+          exclude: [
+            /node_modules/,
+            path.resolve(__dirname, 'src/openclaw'),
+          ],
+          options: {
+            presets: [
+              '@babel/typescript',
+              '@babel/preset-env',
+              [
+                '@babel/preset-react',
+                {
+                  runtime: 'automatic',
+                  importSource: '@teact',
+                },
+              ],
+            ],
+            plugins: [
+              APP_ENV === 'test' && !APP_MOCKED_CLIENT ? 'babel-plugin-transform-import-meta' : undefined,
+            ].filter(Boolean),
+          },
         },
         {
           test: /\.css$/,

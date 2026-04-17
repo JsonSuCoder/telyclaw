@@ -1,0 +1,27 @@
+.OpenclawModal {
+  .modal-dialog {
+    max-width: 90vw;
+    width: 1200px;
+    height: 80vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .modal-content {
+    padding: 0;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  .openclaw-root-container {
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+
+    /* Ensure LobsterAI's Tailwind styles don't conflict too much or are contained */
+    #root {
+      height: 100%;
+    }
+  }
+}
+

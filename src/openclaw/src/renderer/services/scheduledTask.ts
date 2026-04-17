@@ -1,0 +1,250 @@
+import { tauriApi as api } from '../lib/tauri';
+import { store } from '../store';
+import {
+  setLoading,
+  setError,
+  setTasks,
+  addTask,
+  updateTask,
+  removeTask,
+  updateTaskState,
+  setRuns,
+  appendRuns,
+  addOrUpdateRun,
+  setAllRuns,
+  appendAllRuns,
+} from '../store/slices/scheduledTaskSlice';
+import type {
+  ScheduledTask,
+  ScheduledTaskChannelOption,
+  ScheduledTaskConversationOption,
+  ScheduledTaskInput,
+  ScheduledTaskStatusEvent,
+  ScheduledTaskRunEvent,
+} from '../../scheduledTask/types';
+import { i18nService } from './i18n';
+
+function showToast(message: string): void {
+  window.dispatchEvent(new CustomEvent('app:showToast', { detail: message }));
+}
+
+function hasTaskDataAnomaly(task: ScheduledTask): boolean {
+  if (task.schedule.kind === 'every') {
+    const ms = task.schedule.everyMs;
+    if (!Number.isFinite(ms) || ms <= 0) return true;
+  }
+  if (task.schedule.kind === 'at') {
+    const d = new Date(task.schedule.at);
+    if (!Number.isFinite(d.getTime())) return true;
+  }
+  const ts = task.state;
+  const nums = [ts.nextRunAtMs, ts.lastRunAtMs, ts.lastDurationMs, ts.runningAtMs];
+  for (const v of nums) {
+    if (v !== null && !Number.isFinite(v)) return true;
+  }
+  return false;
+}
+
+function checkTasksForAnomalies(tasks: ScheduledTask[]): void {
+  const anomalous = tasks.filter(hasTaskDataAnomaly);
+  if (anomalous.length === 0) return;
+
+  const name = anomalous[0].name;
+  const msg = i18nService.t('scheduledTasksDataAnomalyWarning').replace('{name}', name);
+  showToast(msg);
+}
+
+class ScheduledTaskService {
+  private cleanupFns: (() => void)[] = [];
+  private initialized = false;
+
+  async init(): Promise<void> {
+    if (this.initialized) return;
+    this.initialized = true;
+
+    this.setupListeners();
+    await this.loadTasks();
+  }
+
+  destroy(): void {
+    this.cleanupFns.forEach((fn) => fn());
+    this.cleanupFns = [];
+    this.initialized = false;
+  }
+
+  private setupListeners(): void {
+    const stApi = api.scheduledTasks;
+
+    const cleanupStatus = stApi.onStatusUpdate(
+      (event: ScheduledTaskStatusEvent) => {
+        store.dispatch(
+          updateTaskState({
+            taskId: event.taskId,
+            taskState: event.state,
+          })
+        );
+      }
+    );
+    this.cleanupFns.push(cleanupStatus);
+
+    const cleanupRun = stApi.onRunUpdate(
+      (event: ScheduledTaskRunEvent) => {
+        store.dispatch(addOrUpdateRun(event.run));
+      }
+    );
+    this.cleanupFns.push(cleanupRun);
+
+    // Listen for full refresh events (e.g., after first poll or migration)
+    const cleanupRefresh = stApi.onRefresh(() => {
+      this.loadTasks();
+    });
+    this.cleanupFns.push(cleanupRefresh);
+  }
+
+  async loadTasks(): Promise<void> {
+    store.dispatch(setLoading(true));
+    try {
+      const result = await api.scheduledTasks.list() as any;
+      if (result.success && result.tasks) {
+        checkTasksForAnomalies(result.tasks);
+        store.dispatch(setTasks(result.tasks));
+      }
+    } catch (err: unknown) {
+      store.dispatch(setError(err instanceof Error ? err.message : String(err)));
+    } finally {
+      store.dispatch(setLoading(false));
+    }
+  }
+
+  async createTask(input: ScheduledTaskInput): Promise<void> {
+    try {
+      const result = await api.scheduledTasks.create(input) as any;
+      if (result.success && result.task) {
+        if (hasTaskDataAnomaly(result.task)) {
+          const msg = i18nService.t('scheduledTasksDataAnomalyWarning').replace('{name}', result.task.name);
+          showToast(msg);
+        }
+        store.dispatch(addTask(result.task));
+      } else {
+        throw new Error(result.error || 'Failed to create task');
+      }
+    } catch (err: unknown) {
+      store.dispatch(setError(err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+  }
+
+  async updateTaskById(
+    id: string,
+    input: Partial<ScheduledTaskInput>
+  ): Promise<void> {
+    try {
+      const result = await api.scheduledTasks.update(id, input) as any;
+      if (result.success && result.task) {
+        store.dispatch(updateTask(result.task));
+      } else if (!result.success) {
+        const errorMsg = result.error || 'Failed to update task';
+        store.dispatch(setError(errorMsg));
+        throw new Error(errorMsg);
+      }
+    } catch (err: unknown) {
+      store.dispatch(setError(err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+  }
+
+  async deleteTask(id: string): Promise<void> {
+    try {
+      const result = await api.scheduledTasks.delete(id) as any;
+      if (result.success) {
+        store.dispatch(removeTask(id));
+      }
+    } catch (err: unknown) {
+      store.dispatch(setError(err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+  }
+
+  async toggleTask(id: string, enabled: boolean): Promise<string | null> {
+    try {
+      const result = await api.scheduledTasks.toggle(id, enabled) as any;
+      if (result.success && result.task) {
+        store.dispatch(updateTask(result.task));
+      }
+      return result.warning ?? null;
+    } catch (err: unknown) {
+      store.dispatch(setError(err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+  }
+
+  async runManually(id: string): Promise<void> {
+    try {
+      await api.scheduledTasks.runManually(id);
+    } catch (err: unknown) {
+      store.dispatch(setError(err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+  }
+
+  async stopTask(id: string): Promise<void> {
+    try {
+      await api.scheduledTasks.stop(id);
+    } catch (err: unknown) {
+      store.dispatch(setError(err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+  }
+
+  async loadRuns(taskId: string, limit = 20, offset?: number): Promise<void> {
+    try {
+      const result = await api.scheduledTasks.listRuns(taskId, limit, offset) as any;
+      if (result.success && result.runs) {
+        const hasMore = result.runs.length >= limit;
+        if (offset && offset > 0) {
+          store.dispatch(appendRuns({ taskId, runs: result.runs, hasMore }));
+        } else {
+          store.dispatch(setRuns({ taskId, runs: result.runs, hasMore }));
+        }
+      }
+    } catch (err: unknown) {
+      store.dispatch(setError(err instanceof Error ? err.message : String(err)));
+    }
+  }
+
+  async loadAllRuns(limit?: number, offset?: number): Promise<void> {
+    try {
+      const result = await api.scheduledTasks.listAllRuns(limit, offset) as any;
+      if (result.success && result.runs) {
+        if (offset && offset > 0) {
+          store.dispatch(appendAllRuns(result.runs));
+        } else {
+          store.dispatch(setAllRuns(result.runs));
+        }
+      }
+    } catch (err: unknown) {
+      store.dispatch(setError(err instanceof Error ? err.message : String(err)));
+    }
+  }
+
+  async listChannels(): Promise<ScheduledTaskChannelOption[]> {
+    try {
+      const result = await api.scheduledTasks.listChannels() as any;
+      return result.success && result.channels ? result.channels : [];
+    } catch (err: unknown) {
+      store.dispatch(setError(err instanceof Error ? err.message : String(err)));
+      return [];
+    }
+  }
+
+  async listChannelConversations(channel: string, accountId?: string): Promise<ScheduledTaskConversationOption[]> {
+    try {
+      const result = await api.scheduledTasks.listChannelConversations!(channel, accountId) as any;
+      return result.success && result.conversations ? result.conversations : [];
+    } catch {
+      return [];
+    }
+  }
+}
+
+export const scheduledTaskService = new ScheduledTaskService();

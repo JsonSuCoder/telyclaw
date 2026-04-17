@@ -199,6 +199,8 @@ export type TabState = {
     inviteInfo: ApiChatInviteInfo;
   };
 
+  isOpenclawModalOpen?: boolean;
+
   seenByModal?: {
     chatId: string;
     messageId: number;

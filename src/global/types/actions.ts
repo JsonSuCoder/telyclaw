@@ -849,6 +849,8 @@ export interface ActionPayloads {
 
   // stats
   toggleStatistics: WithTabId | undefined;
+  toggleOpenclawModal: WithTabId | undefined;
+  closeOpenclawModal: WithTabId | undefined;
   toggleMessageStatistics: ({
     messageId?: number;
   } & WithTabId) | undefined;

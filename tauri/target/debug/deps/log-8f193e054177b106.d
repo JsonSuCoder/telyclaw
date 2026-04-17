@@ -1,0 +1,13 @@
+/Users/qmk/work/telyclaw/telegram-tt/tauri/target/debug/deps/liblog-8f193e054177b106.rmeta: /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.29/src/lib.rs /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.29/src/macros.rs /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.29/src/serde.rs /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.29/src/kv/mod.rs /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.29/src/kv/error.rs /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.29/src/kv/key.rs /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.29/src/kv/source.rs /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.29/src/kv/value.rs /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.29/src/__private_api.rs
+
+/Users/qmk/work/telyclaw/telegram-tt/tauri/target/debug/deps/log-8f193e054177b106.d: /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.29/src/lib.rs /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.29/src/macros.rs /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.29/src/serde.rs /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.29/src/kv/mod.rs /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.29/src/kv/error.rs /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.29/src/kv/key.rs /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.29/src/kv/source.rs /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.29/src/kv/value.rs /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.29/src/__private_api.rs
+
+/Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.29/src/lib.rs:
+/Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.29/src/macros.rs:
+/Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.29/src/serde.rs:
+/Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.29/src/kv/mod.rs:
+/Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.29/src/kv/error.rs:
+/Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.29/src/kv/key.rs:
+/Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.29/src/kv/source.rs:
+/Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.29/src/kv/value.rs:
+/Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.29/src/__private_api.rs:

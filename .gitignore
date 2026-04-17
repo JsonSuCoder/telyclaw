@@ -5,6 +5,7 @@ node_modules
 src/lib/gramjs/build/
 build-contest/
 tests/
+tauri/target/
 .idea
 *.iml
 dev/perf/screenshot*

@@ -169,16 +169,16 @@ pub async fn cowork_update_message(state: State<'_, OpenClawState>, message_id: 
     if let Some(content) = updates.get("content").and_then(|v| v.as_str()) {
         sqlx::query("UPDATE cowork_messages SET content = ? WHERE id = ?")
             .bind(content)
-            .bind(message_id)
+            .bind(&message_id)
             .execute(&state.db.pool)
             .await
             .map_err(|e| e.to_string())?;
     }
-    
+
     if let Some(metadata) = updates.get("metadata") {
         sqlx::query("UPDATE cowork_messages SET metadata = ? WHERE id = ?")
             .bind(metadata.to_string())
-            .bind(message_id)
+            .bind(&message_id)
             .execute(&state.db.pool)
             .await
             .map_err(|e| e.to_string())?;
@@ -279,7 +279,7 @@ pub async fn agents_create(state: State<'_, OpenClawState>, request: serde_json:
 }
 
 #[tauri::command]
-pub async fn mcp_list(state: State<'_, OpenClawState>) -> Result<Vec<serde_json::Value>, String> {
+pub async fn mcp_list(state: State<'_, OpenClawState>) -> Result<serde_json::Value, String> {
     let rows = sqlx::query("SELECT * FROM mcp_servers ORDER BY name ASC")
         .fetch_all(&state.db.pool)
         .await
@@ -298,7 +298,7 @@ pub async fn mcp_list(state: State<'_, OpenClawState>) -> Result<Vec<serde_json:
             "updatedAt": row.get::<i64, _>("updated_at")
         }));
     }
-    Ok(result)
+    Ok(json!({ "success": true, "servers": result }))
 }
 
 #[tauri::command]
@@ -325,5 +325,5 @@ pub async fn mcp_create(state: State<'_, OpenClawState>, data: serde_json::Value
     .await
     .map_err(|e| e.to_string())?;
 
-    Ok(json!({ "id": id }))
+    mcp_list(state).await
 }

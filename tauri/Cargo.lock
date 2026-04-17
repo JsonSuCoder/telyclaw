@@ -5498,6 +5498,7 @@ dependencies = [
 name = "telegram_air"
 version = "2.10.3"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
  "cocoa",
  "log",

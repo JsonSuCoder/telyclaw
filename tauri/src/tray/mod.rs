@@ -177,7 +177,7 @@ fn handle_icon_click(app: &AppHandle, only_open: bool) {
 #[cfg(target_os = "macos")]
 mod platform {
   use super::*;
-  pub fn set_notifications_count(window: &WebviewWindow, amount: i32, is_muted: bool) {
+  pub fn set_notifications_count(window: &WebviewWindow, amount: i32, _is_muted: bool) {
     window
       .set_badge_count(if amount > 0 {
         Some(amount.into())
@@ -191,7 +191,7 @@ mod platform {
 #[cfg(not(target_os = "macos"))]
 mod platform {
   use super::*;
-  pub fn set_notifications_count(window: &WebviewWindow, amount: i32, is_muted: bool) {
+  pub fn set_notifications_count(window: &WebviewWindow, amount: i32, _is_muted: bool) {
     badge::set_badge_count_icon(window, amount, is_muted);
   }
 }

@@ -1,14 +1,13 @@
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 use std::fs;
-use std::path::PathBuf;
 
 use serde_json::json;
 use tauri::{Emitter, LogicalPosition, Manager, webview::DownloadEvent};
 use url::Url;
 use uuid::Uuid;
 
-use tauri_plugin_autostart::{MacosLauncher, ManagerExt as _};
+use tauri_plugin_autostart::MacosLauncher;
 
 mod deeplink;
 use deeplink::Deeplink;
@@ -116,16 +115,14 @@ pub fn run() {
     .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--auto-launched"])))
     .setup(|app| {
       let app_handle = app.handle().clone();
-      tauri::async_runtime::spawn(async move {
-        match OpenClawDb::new(&app_handle).await {
-          Ok(db) => {
-            app_handle.manage(OpenClawState { db });
-          }
-          Err(e) => {
-            eprintln!("Failed to initialize OpenClaw DB: {}", e);
-          }
+      match tauri::async_runtime::block_on(OpenClawDb::new(&app_handle)) {
+        Ok(db) => {
+          app_handle.manage(OpenClawState { db });
         }
-      });
+        Err(e) => {
+          eprintln!("Failed to initialize OpenClaw DB: {}", e);
+        }
+      }
       Ok(())
     });
 
@@ -233,7 +230,125 @@ pub fn run() {
     mcp_list,
     mcp_create,
     app_get_version,
-    app_get_system_locale
+    app_get_system_locale,
+    skills_list,
+    skills_set_enabled,
+    skills_delete,
+    skills_download,
+    skills_upgrade,
+    skills_confirm_install,
+    skills_get_root,
+    skills_auto_routing_prompt,
+    skills_get_config,
+    skills_set_config,
+    skills_test_email_connectivity,
+    mcp_update,
+    mcp_delete,
+    mcp_set_enabled,
+    mcp_fetch_marketplace,
+    mcp_refresh_bridge,
+    agents_update,
+    agents_delete,
+    agents_presets,
+    agents_add_preset,
+    api_fetch,
+    api_stream,
+    api_cancel_stream,
+    get_api_config,
+    check_api_config,
+    save_api_config,
+    generate_session_title,
+    get_recent_cwds,
+    window_minimize,
+    window_toggle_maximize,
+    window_close,
+    window_is_maximized,
+    window_show_system_menu,
+    shell_open_path,
+    shell_show_item_in_folder,
+    cowork_set_session_pinned,
+    cowork_rename_session,
+    cowork_remote_managed,
+    cowork_export_result_image,
+    cowork_capture_image_chunk,
+    cowork_save_result_image,
+    cowork_export_session_text,
+    cowork_respond_to_permission,
+    cowork_list_memory_entries,
+    cowork_create_memory_entry,
+    cowork_update_memory_entry,
+    cowork_delete_memory_entry,
+    cowork_get_memory_stats,
+    cowork_read_bootstrap_file,
+    cowork_write_bootstrap_file,
+    dialog_select_directory,
+    dialog_select_file,
+    dialog_select_files,
+    dialog_save_inline_file,
+    dialog_read_file_as_data_url,
+    app_update_download,
+    app_update_cancel_download,
+    app_update_install,
+    log_get_path,
+    log_open_folder,
+    log_export_zip,
+    im_get_config,
+    im_set_config,
+    im_sync_config,
+    im_start_gateway,
+    im_stop_gateway,
+    im_test_gateway,
+    im_get_status,
+    im_get_local_ip,
+    im_get_openclaw_config_schema,
+    im_weixin_qr_login_start,
+    im_weixin_qr_login_wait,
+    im_list_pairing_requests,
+    im_approve_pairing_code,
+    im_reject_pairing_request,
+    im_add_qq_instance,
+    im_delete_qq_instance,
+    im_set_qq_instance_config,
+    im_add_feishu_instance,
+    im_delete_feishu_instance,
+    im_set_feishu_instance_config,
+    im_add_dingtalk_instance,
+    im_delete_dingtalk_instance,
+    im_set_dingtalk_instance_config,
+    scheduled_tasks_list,
+    scheduled_tasks_get,
+    scheduled_tasks_create,
+    scheduled_tasks_update,
+    scheduled_tasks_delete,
+    scheduled_tasks_toggle,
+    scheduled_tasks_run_manually,
+    scheduled_tasks_stop,
+    scheduled_tasks_list_runs,
+    scheduled_tasks_count_runs,
+    scheduled_tasks_list_all_runs,
+    scheduled_tasks_resolve_session,
+    scheduled_tasks_list_channels,
+    scheduled_tasks_list_channel_conversations,
+    permissions_check_calendar,
+    permissions_request_calendar,
+    auth_login,
+    auth_exchange,
+    auth_get_user,
+    auth_get_quota,
+    auth_logout,
+    auth_refresh_token,
+    auth_get_access_token,
+    auth_get_models,
+    auth_get_profile_summary,
+    enterprise_get_config,
+    feishu_install_qrcode,
+    feishu_install_poll,
+    feishu_install_verify,
+    github_copilot_request_device_code,
+    github_copilot_poll_for_token,
+    github_copilot_cancel_polling,
+    github_copilot_sign_out,
+    github_copilot_refresh_token
   ]);
 
   app
@@ -584,3 +699,6 @@ pub(crate) fn open_new_window(
 
   Ok(window)
 }
+
+mod tauri_compat_stubs;
+use tauri_compat_stubs::*;

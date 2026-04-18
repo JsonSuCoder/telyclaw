@@ -4,6 +4,7 @@ use std::fs;
 
 use serde_json::json;
 use tauri::{Emitter, LogicalPosition, Manager, webview::DownloadEvent};
+use sqlx::Row;
 use url::Url;
 use uuid::Uuid;
 
@@ -113,20 +114,7 @@ pub fn run() {
     .plugin(tauri_plugin_process::init())
     .plugin(tauri_plugin_sql::Builder::default().build())
     .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--auto-launched"])))
-    .setup(|app| {
-      let app_handle = app.handle().clone();
-      match tauri::async_runtime::block_on(OpenClawDb::new(&app_handle)) {
-        Ok(db) => {
-          app_handle.manage(OpenClawState { db });
-        }
-        Err(e) => {
-          eprintln!("Failed to initialize OpenClaw DB: {}", e);
-        }
-      }
-      Ok(())
-    });
-
-  let app = app.on_window_event(|window, event| match event {
+    .on_window_event(|window, event| match event {
     tauri::WindowEvent::CloseRequested { api, .. } => {
       let active_windows = window.app_handle().windows();
 
@@ -167,9 +155,14 @@ pub fn run() {
       }
     }
     _ => {}
-  });
+  })
+  .setup(|app| {
+    // Initialize OpenClaw DB
+    let app_handle = app.handle().clone();
+    let db = tauri::async_runtime::block_on(OpenClawDb::new(&app_handle))
+      .expect("Failed to initialize OpenClaw DB");
+    app_handle.manage(OpenClawState { db });
 
-  let app = app.setup(|app| {
     // Manage app state
     app.manage(AppState::new(AppStateStruct::default()));
 
@@ -559,32 +552,296 @@ fn openclaw_session_policy_set(config: serde_json::Value) -> Result<(), String> 
 }
 
 #[tauri::command]
-fn cowork_get_config() -> serde_json::Value {
-  json!({})
+async fn cowork_get_config(app: tauri::AppHandle, state: tauri::State<'_, OpenClawState>) -> Result<serde_json::Value, String> {
+  let row = sqlx::query("SELECT value FROM kv WHERE key = ?")
+    .bind("cowork.config")
+    .fetch_optional(&state.db.pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+  let mut config = row
+    .and_then(|r| r.try_get::<String, _>("value").ok())
+    .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+    .unwrap_or_else(|| json!({}));
+
+  let default_workdir = app
+    .path()
+    .app_data_dir()
+    .map_err(|e| e.to_string())?
+    .join("cowork-workspace");
+  if !default_workdir.exists() {
+    std::fs::create_dir_all(&default_workdir).map_err(|e| e.to_string())?;
+  }
+
+  if !config.get("workingDirectory").and_then(|v| v.as_str()).map(|v| !v.trim().is_empty()).unwrap_or(false) {
+    if let serde_json::Value::Object(map) = &mut config {
+      map.insert("workingDirectory".to_string(), json!(default_workdir.to_string_lossy().to_string()));
+    }
+  }
+
+  if let serde_json::Value::Object(map) = &mut config {
+    map.entry("systemPrompt".to_string()).or_insert_with(|| json!(""));
+    map.entry("executionMode".to_string()).or_insert_with(|| json!("local"));
+    map.entry("agentEngine".to_string()).or_insert_with(|| json!("openclaw"));
+    map.entry("memoryEnabled".to_string()).or_insert_with(|| json!(true));
+    map.entry("memoryImplicitUpdateEnabled".to_string()).or_insert_with(|| json!(true));
+    map.entry("memoryLlmJudgeEnabled".to_string()).or_insert_with(|| json!(false));
+    map.entry("memoryGuardLevel".to_string()).or_insert_with(|| json!("standard"));
+    map.entry("memoryUserMemoriesMaxItems".to_string()).or_insert_with(|| json!(200));
+    map.entry("skipMissedJobs".to_string()).or_insert_with(|| json!(true));
+    map.entry("openClawSessionPolicy".to_string()).or_insert_with(|| json!({ "keepAlive": "30d" }));
+  }
+
+  Ok(json!({ "success": true, "config": config }))
 }
 
 #[tauri::command]
-fn cowork_set_config(config: serde_json::Value) -> Result<(), String> {
-  println!("cowork_set_config: {:?}", config);
-  Ok(())
+async fn cowork_set_config(state: tauri::State<'_, OpenClawState>, config: serde_json::Value) -> Result<serde_json::Value, String> {
+  let now = chrono::Utc::now().timestamp_millis();
+  sqlx::query(
+    "INSERT INTO kv (key, value, updated_at) VALUES (?, ?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+  )
+  .bind("cowork.config")
+  .bind(config.to_string())
+  .bind(now)
+  .execute(&state.db.pool)
+  .await
+  .map_err(|e| e.to_string())?;
+
+  Ok(json!({ "success": true }))
 }
 
 #[tauri::command]
-fn cowork_continue_session(options: serde_json::Value) -> Result<(), String> {
-  println!("cowork_continue_session: {:?}", options);
-  Ok(())
+async fn cowork_continue_session(
+  app: tauri::AppHandle,
+  state: tauri::State<'_, OpenClawState>,
+  sessionId: String,
+  prompt: String,
+  systemPrompt: Option<String>,
+  activeSkillIds: Option<Vec<String>>,
+  imageAttachments: Option<serde_json::Value>,
+) -> Result<serde_json::Value, String> {
+  if sessionId.trim().is_empty() {
+    return Ok(json!({ "success": false, "error": "Missing sessionId" }));
+  }
+  if prompt.trim().is_empty() {
+    return Ok(json!({ "success": false, "error": "Missing prompt" }));
+  }
+
+  let now = chrono::Utc::now().timestamp_millis();
+
+  sqlx::query("UPDATE cowork_sessions SET status = ?, updated_at = ? WHERE id = ?")
+    .bind("running")
+    .bind(now)
+    .bind(&sessionId)
+    .execute(&state.db.pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+  let next_seq = sqlx::query("SELECT COALESCE(MAX(sequence), 0) AS max_seq FROM cowork_messages WHERE session_id = ?")
+    .bind(&sessionId)
+    .fetch_one(&state.db.pool)
+    .await
+    .ok()
+    .and_then(|r| r.try_get::<i64, _>("max_seq").ok())
+    .unwrap_or(0) + 1;
+
+  let user_message_id = uuid::Uuid::new_v4().to_string();
+  let mut meta = serde_json::Map::new();
+  let active_skill_ids_val = json!(activeSkillIds.clone().unwrap_or_default());
+  meta.insert("skillIds".to_string(), active_skill_ids_val.clone());
+  if let Some(attachments) = imageAttachments.clone() {
+    meta.insert("imageAttachments".to_string(), attachments);
+  }
+  let meta_str = serde_json::Value::Object(meta).to_string();
+
+  sqlx::query(
+    "INSERT INTO cowork_messages (id, session_id, type, content, metadata, created_at, sequence)
+     VALUES (?, ?, ?, ?, ?, ?, ?)",
+  )
+  .bind(&user_message_id)
+  .bind(&sessionId)
+  .bind("user")
+  .bind(&prompt)
+  .bind(meta_str)
+  .bind(now)
+  .bind(next_seq)
+  .execute(&state.db.pool)
+  .await
+  .map_err(|e| e.to_string())?;
+
+  let _ = app.emit("cowork_stream_message", json!({
+    "sessionId": sessionId,
+    "message": {
+      "id": user_message_id,
+      "type": "user",
+      "content": prompt,
+      "timestamp": now,
+      "metadata": {
+        "skillIds": active_skill_ids_val,
+        "imageAttachments": imageAttachments
+      }
+    }
+  }));
+
+  let cfg = {
+    let path = app.path().app_data_dir().map_err(|e| e.to_string())?.join("store.json");
+    let content = std::fs::read_to_string(path).unwrap_or_else(|_| "{}".to_string());
+    let store: HashMap<String, serde_json::Value> = serde_json::from_str(&content).unwrap_or_default();
+    let app_config = store.get("app_config").cloned().unwrap_or_else(|| json!({}));
+    let api_key = app_config.pointer("/api/key").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let base_url = app_config.pointer("/api/baseUrl").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let model = app_config.pointer("/model/defaultModel").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    (api_key, base_url, model)
+  };
+
+  let (api_key, base_url, model) = cfg;
+  let pool = state.db.pool.clone();
+  let app_clone = app.clone();
+  let session_id_clone = sessionId.clone();
+  let system_prompt = systemPrompt.unwrap_or_default();
+
+  tauri::async_runtime::spawn(async move {
+    let assistant_message_id = uuid::Uuid::new_v4().to_string();
+    let ts = chrono::Utc::now().timestamp_millis();
+    let seq = next_seq + 1;
+
+    let _ = sqlx::query(
+      "INSERT INTO cowork_messages (id, session_id, type, content, metadata, created_at, sequence)
+       VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&assistant_message_id)
+    .bind(&session_id_clone)
+    .bind("assistant")
+    .bind("")
+    .bind(Option::<String>::None)
+    .bind(ts)
+    .bind(seq)
+    .execute(&pool)
+    .await;
+
+    let _ = app_clone.emit("cowork_stream_message", json!({
+      "sessionId": session_id_clone,
+      "message": { "id": assistant_message_id, "type": "assistant", "content": "", "timestamp": ts, "metadata": { "isStreaming": true } }
+    }));
+
+    let reply = if api_key.trim().is_empty() || base_url.trim().is_empty() || model.trim().is_empty() {
+      "API config missing. Please open Settings -> Model and set your API key.".to_string()
+    } else {
+      let client = reqwest::Client::new();
+      let base = base_url.trim_end_matches('/').to_string();
+      let url = format!("{}/v1/messages", base);
+      let resp = client
+        .post(url)
+        .header("content-type", "application/json")
+        .header("x-api-key", api_key.clone())
+        .header("anthropic-version", "2023-06-01")
+        .json(&json!({
+          "model": model,
+          "max_tokens": 1024,
+          "system": system_prompt,
+          "messages": [{ "role": "user", "content": prompt }]
+        }))
+        .send()
+        .await;
+
+      match resp {
+        Ok(r) if r.status().is_success() => {
+          let text = r.text().await.unwrap_or_default();
+          if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+            if let Some(arr) = v.get("content").and_then(|c| c.as_array()) {
+              let mut out = String::new();
+              for item in arr {
+                if item.get("type").and_then(|t| t.as_str()) == Some("text") {
+                  if let Some(t) = item.get("text").and_then(|t| t.as_str()) {
+                    out.push_str(t);
+                  }
+                }
+              }
+              if !out.trim().is_empty() {
+                out
+              } else {
+                text
+              }
+            } else {
+              text
+            }
+          } else {
+            text
+          }
+        }
+        Ok(r) => {
+          let text = r.text().await.unwrap_or_default();
+          format!("Error: {}", text)
+        }
+        Err(e) => format!("Error: {}", e),
+      }
+    };
+
+    let _ = sqlx::query("UPDATE cowork_messages SET content = ? WHERE id = ?")
+      .bind(&reply)
+      .bind(&assistant_message_id)
+      .execute(&pool)
+      .await;
+
+    let _ = app_clone.emit("cowork_stream_message_update", json!({
+      "sessionId": session_id_clone,
+      "messageId": assistant_message_id,
+      "content": reply
+    }));
+
+    let _ = sqlx::query("UPDATE cowork_sessions SET status = ?, updated_at = ? WHERE id = ?")
+      .bind("completed")
+      .bind(chrono::Utc::now().timestamp_millis())
+      .bind(&session_id_clone)
+      .execute(&pool)
+      .await;
+
+    let _ = app_clone.emit("cowork_stream_complete", json!({ "sessionId": session_id_clone }));
+    let _ = app_clone.emit("cowork_sessions_changed", json!({}));
+  });
+
+  Ok(json!({ "success": true }))
 }
 
 #[tauri::command]
-fn cowork_stop_session(session_id: String) -> Result<(), String> {
-  println!("cowork_stop_session: {}", session_id);
-  Ok(())
+async fn cowork_stop_session(
+  state: tauri::State<'_, OpenClawState>,
+  sessionId: String,
+) -> Result<serde_json::Value, String> {
+  if sessionId.trim().is_empty() {
+    return Ok(json!({ "success": false, "error": "Missing sessionId" }));
+  }
+  sqlx::query("UPDATE cowork_sessions SET status = ?, updated_at = ? WHERE id = ?")
+    .bind("idle")
+    .bind(chrono::Utc::now().timestamp_millis())
+    .bind(&sessionId)
+    .execute(&state.db.pool)
+    .await
+    .map_err(|e| e.to_string())?;
+  Ok(json!({ "success": true }))
 }
 
 #[tauri::command]
-fn cowork_delete_sessions(session_ids: Vec<String>) -> Result<(), String> {
-  println!("cowork_delete_sessions: {:?}", session_ids);
-  Ok(())
+async fn cowork_delete_sessions(
+  state: tauri::State<'_, OpenClawState>,
+  sessionIds: Vec<String>,
+) -> Result<serde_json::Value, String> {
+  if sessionIds.is_empty() {
+    return Ok(json!({ "success": true }));
+  }
+  for id in &sessionIds {
+    let _ = sqlx::query("DELETE FROM cowork_messages WHERE session_id = ?")
+      .bind(id)
+      .execute(&state.db.pool)
+      .await;
+    let _ = sqlx::query("DELETE FROM cowork_sessions WHERE id = ?")
+      .bind(id)
+      .execute(&state.db.pool)
+      .await;
+  }
+  Ok(json!({ "success": true }))
 }
 
 #[tauri::command]

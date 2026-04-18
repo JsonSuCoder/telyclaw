@@ -79,7 +79,7 @@ export const tauriApi: any = {
     },
   },
   getApiConfig: () => invoke('get_api_config'),
-  checkApiConfig: (options?: any) => invoke('check_api_config', options),
+  checkApiConfig: (options?: any) => invoke('check_api_config', { options: options ?? {} }),
   saveApiConfig: (config: any) => invoke('save_api_config', { config }),
   generateSessionTitle: (userInput: string | null) => invoke('generate_session_title', { userInput }),
   getRecentCwds: (limit?: number) => invoke('get_recent_cwds', { limit }),

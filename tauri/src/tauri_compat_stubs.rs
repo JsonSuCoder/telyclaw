@@ -1,10 +1,21 @@
 use crate::openclaw::OpenClawState;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::Engine as _;
+use futures_util::StreamExt;
+use mime_guess::MimeGuess;
+use reqwest::header::HeaderMap;
+use reqwest::Method;
 use serde_json::{json, Value};
 use sqlx::{Pool, Row, Sqlite};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Command;
-use tauri::{AppHandle, Manager, State};
+use std::sync::{LazyLock, Mutex};
+use tauri::{AppHandle, Emitter, Manager, State};
+use tokio_util::sync::CancellationToken;
+
+static API_STREAM_CANCELLATIONS: LazyLock<Mutex<HashMap<String, CancellationToken>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
@@ -1022,38 +1033,263 @@ pub async fn agents_add_preset(state: State<'_, OpenClawState>, presetId: String
 }
 
 #[tauri::command]
-pub fn api_fetch(options: serde_json::Value) -> serde_json::Value {
+pub async fn api_fetch(
+    url: String,
+    method: Option<String>,
+    headers: Option<HashMap<String, String>>,
+    body: Option<Value>,
+) -> Value {
+    if url.trim().is_empty() {
+        return json!({ "ok": false, "status": 0, "error": "Missing url" });
+    }
+    let method = method.unwrap_or_else(|| "GET".to_string());
+    let method = Method::from_bytes(method.as_bytes()).unwrap_or(Method::GET);
+
+    let mut header_map = HeaderMap::new();
+    if let Some(map) = headers {
+        for (k, v) in map {
+            if let (Ok(name), Ok(value)) = (
+                reqwest::header::HeaderName::from_bytes(k.as_bytes()),
+                reqwest::header::HeaderValue::from_str(&v),
+            ) {
+                header_map.insert(name, value);
+            }
+        }
+    }
+
+    let client = reqwest::Client::new();
+    let mut req = client.request(method, url).headers(header_map);
+    if let Some(body) = body {
+        if body.is_string() {
+            req = req.body(body.as_str().unwrap_or("").to_string());
+        } else {
+            req = req.body(body.to_string());
+        }
+    }
+
+    let resp = match req.send().await {
+        Ok(r) => r,
+        Err(e) => return json!({ "ok": false, "status": 0, "error": e.to_string() }),
+    };
+
+    let status = resp.status().as_u16();
+    let ok = resp.status().is_success();
+    let content_type = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+
+    let bytes = match resp.bytes().await {
+        Ok(b) => b,
+        Err(e) => return json!({ "ok": false, "status": status, "error": e.to_string() }),
+    };
+    let text = String::from_utf8_lossy(&bytes).to_string();
+
+    let data = if content_type.to_lowercase().contains("json") {
+        serde_json::from_str::<Value>(&text).unwrap_or(Value::String(text))
+    } else {
+        Value::String(text)
+    };
+
+    json!({ "ok": ok, "status": status, "data": data })
+}
+
+#[tauri::command]
+pub async fn api_stream(
+    app: AppHandle,
+    requestId: String,
+    url: String,
+    method: Option<String>,
+    headers: Option<HashMap<String, String>>,
+    body: Option<Value>,
+) -> Value {
+    if requestId.trim().is_empty() {
+        return json!({ "ok": false, "status": 0, "error": "Missing requestId" });
+    }
+    if url.trim().is_empty() {
+        return json!({ "ok": false, "status": 0, "error": "Missing url" });
+    }
+
+    let method = method.unwrap_or_else(|| "POST".to_string());
+    let method = Method::from_bytes(method.as_bytes()).unwrap_or(Method::POST);
+
+    let mut header_map = HeaderMap::new();
+    if let Some(map) = headers {
+        for (k, v) in map {
+            if let (Ok(name), Ok(value)) = (
+                reqwest::header::HeaderName::from_bytes(k.as_bytes()),
+                reqwest::header::HeaderValue::from_str(&v),
+            ) {
+                header_map.insert(name, value);
+            }
+        }
+    }
+
+    let client = reqwest::Client::new();
+    let mut req = client.request(method, url).headers(header_map);
+    if let Some(body) = body {
+        if body.is_string() {
+            req = req.body(body.as_str().unwrap_or("").to_string());
+        } else {
+            req = req.body(body.to_string());
+        }
+    }
+
+    let cancel_token = CancellationToken::new();
+    {
+        let mut map = API_STREAM_CANCELLATIONS.lock().unwrap();
+        map.insert(requestId.clone(), cancel_token.clone());
+    }
+
+    let resp = match req.send().await {
+        Ok(r) => r,
+        Err(e) => {
+            let mut map = API_STREAM_CANCELLATIONS.lock().unwrap();
+            map.remove(&requestId);
+            return json!({ "ok": false, "status": 0, "error": e.to_string() });
+        }
+    };
+
+    let status = resp.status().as_u16();
+    let ok = resp.status().is_success();
+
+    if !ok {
+        let text = resp.text().await.unwrap_or_else(|_| "".to_string());
+        let mut map = API_STREAM_CANCELLATIONS.lock().unwrap();
+        map.remove(&requestId);
+        return json!({ "ok": false, "status": status, "error": text });
+    }
+
+    let app_clone = app.clone();
+    let request_id_clone = requestId.clone();
+    tauri::async_runtime::spawn(async move {
+        let data_event = format!("api_stream_data_{}", request_id_clone);
+        let done_event = format!("api_stream_done_{}", request_id_clone);
+        let error_event = format!("api_stream_error_{}", request_id_clone);
+        let abort_event = format!("api_stream_abort_{}", request_id_clone);
+
+        let mut stream = resp.bytes_stream();
+        while let Some(item) = stream.next().await {
+            if cancel_token.is_cancelled() {
+                let _ = app_clone.emit(&abort_event, json!({ "requestId": request_id_clone }));
+                let mut map = API_STREAM_CANCELLATIONS.lock().unwrap();
+                map.remove(&request_id_clone);
+                return;
+            }
+            match item {
+                Ok(chunk) => {
+                    let text = String::from_utf8_lossy(&chunk).to_string();
+                    if !text.is_empty() {
+                        let _ = app_clone.emit(&data_event, text);
+                    }
+                }
+                Err(e) => {
+                    let _ = app_clone.emit(&error_event, e.to_string());
+                    let mut map = API_STREAM_CANCELLATIONS.lock().unwrap();
+                    map.remove(&request_id_clone);
+                    return;
+                }
+            }
+        }
+
+        let _ = app_clone.emit(&done_event, json!({ "requestId": request_id_clone }));
+        let mut map = API_STREAM_CANCELLATIONS.lock().unwrap();
+        map.remove(&request_id_clone);
+    });
+
+    json!({ "ok": true, "status": status })
+}
+
+#[tauri::command]
+pub fn api_cancel_stream(app: AppHandle, requestId: String) -> Value {
+    if requestId.is_empty() {
+        return json!({ "success": false, "error": "Missing requestId" });
+    }
+    let token = {
+        let map = API_STREAM_CANCELLATIONS.lock().unwrap();
+        map.get(&requestId).cloned()
+    };
+    if let Some(t) = token {
+        t.cancel();
+    }
+    let abort_event = format!("api_stream_abort_{}", requestId);
+    let _ = app.emit(&abort_event, json!({ "requestId": requestId }));
+    json!({ "success": true })
+}
+
+#[tauri::command]
+pub async fn get_api_config(app: AppHandle) -> Result<Value, String> {
+    let path = app.path().app_data_dir().map_err(|e| e.to_string())?.join("store.json");
+    if !path.exists() {
+        return Ok(json!({ "apiKey": "", "baseUrl": "", "model": "" }));
+    }
+    let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    let store: HashMap<String, Value> = serde_json::from_str(&content).unwrap_or_default();
+    let app_config = store.get("app_config").cloned().unwrap_or_else(|| json!({}));
+    let api_key = app_config.pointer("/api/key").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let base_url = app_config.pointer("/api/baseUrl").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let model = app_config.pointer("/model/defaultModel").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    Ok(json!({ "apiKey": api_key, "baseUrl": base_url, "model": model }))
+}
+
+#[tauri::command]
+pub async fn check_api_config(app: AppHandle, options: Value) -> Result<Value, String> {
     let _ = options;
-    json!({"success": false, "error": "not_implemented"})
+    let cfg = get_api_config(app).await?;
+    let api_key = cfg.get("apiKey").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+    let base_url = cfg.get("baseUrl").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+    let model = cfg.get("model").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+    if api_key.is_empty() || base_url.is_empty() || model.is_empty() {
+        return Ok(json!({ "hasConfig": false, "config": cfg, "error": "Missing API key/baseUrl/model" }));
+    }
+    Ok(json!({ "hasConfig": true, "config": cfg }))
 }
 
 #[tauri::command]
-pub fn api_stream(options: serde_json::Value) -> serde_json::Value {
-    let _ = options;
-    json!({"success": false, "error": "not_implemented"})
-}
+pub async fn save_api_config(app: AppHandle, config: Value) -> Result<Value, String> {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    if !data_dir.exists() {
+        std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
+    }
+    let path = data_dir.join("store.json");
+    let mut store: HashMap<String, Value> = if path.exists() {
+        let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        serde_json::from_str(&content).unwrap_or_default()
+    } else {
+        HashMap::new()
+    };
+    let mut app_config = store.get("app_config").cloned().unwrap_or_else(|| json!({}));
+    if !app_config.is_object() {
+        app_config = json!({});
+    }
+    let api_key = config.get("apiKey").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let base_url = config.get("baseUrl").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let model = config.get("model").and_then(|v| v.as_str()).unwrap_or("").to_string();
 
-#[tauri::command]
-pub fn api_cancel_stream(requestId: serde_json::Value) -> serde_json::Value {
-    let _ = requestId;
-    json!({"success": false, "error": "not_implemented"})
-}
+    if let Value::Object(map) = &mut app_config {
+        let api = map.entry("api".to_string()).or_insert_with(|| json!({}));
+        if let Value::Object(api_map) = api {
+            if !api_key.trim().is_empty() {
+                api_map.insert("key".to_string(), json!(api_key));
+            }
+            if !base_url.trim().is_empty() {
+                api_map.insert("baseUrl".to_string(), json!(base_url));
+            }
+        }
+        let model_obj = map.entry("model".to_string()).or_insert_with(|| json!({}));
+        if let Value::Object(model_map) = model_obj {
+            if !model.trim().is_empty() {
+                model_map.insert("defaultModel".to_string(), json!(model));
+            }
+        }
+    }
 
-#[tauri::command]
-pub fn get_api_config() -> serde_json::Value {
-    json!({})
-}
-
-#[tauri::command]
-pub fn check_api_config(options: serde_json::Value) -> serde_json::Value {
-    let _ = options;
-    json!({"success": false, "error": "not_implemented"})
-}
-
-#[tauri::command]
-pub fn save_api_config(config: serde_json::Value) -> serde_json::Value {
-    let _ = config;
-    json!({"success": false, "error": "not_implemented"})
+    store.insert("app_config".to_string(), app_config);
+    let content = serde_json::to_string(&store).map_err(|e| e.to_string())?;
+    std::fs::write(path, content).map_err(|e| e.to_string())?;
+    Ok(json!({ "success": true }))
 }
 
 #[tauri::command]
@@ -1213,21 +1449,43 @@ pub fn shell_show_item_in_folder(filePath: serde_json::Value) -> serde_json::Val
 }
 
 #[tauri::command]
-pub fn cowork_set_session_pinned(options: serde_json::Value) -> serde_json::Value {
-    let _ = options;
-    json!({"success": false, "error": "not_implemented"})
+pub async fn cowork_set_session_pinned(state: State<'_, OpenClawState>, sessionId: String, pinned: bool) -> Result<Value, String> {
+    if sessionId.trim().is_empty() {
+        return Ok(json!({ "success": false, "error": "Missing sessionId" }));
+    }
+    sqlx::query("UPDATE cowork_sessions SET pinned = ?, updated_at = ? WHERE id = ?")
+        .bind(if pinned { 1 } else { 0 })
+        .bind(now_ms())
+        .bind(&sessionId)
+        .execute(&state.db.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(json!({ "success": true }))
 }
 
 #[tauri::command]
-pub fn cowork_rename_session(options: serde_json::Value) -> serde_json::Value {
-    let _ = options;
-    json!({"success": false, "error": "not_implemented"})
+pub async fn cowork_rename_session(state: State<'_, OpenClawState>, sessionId: String, title: String) -> Result<Value, String> {
+    let title = title.trim().to_string();
+    if sessionId.trim().is_empty() {
+        return Ok(json!({ "success": false, "error": "Missing sessionId" }));
+    }
+    if title.is_empty() {
+        return Ok(json!({ "success": false, "error": "Missing title" }));
+    }
+    sqlx::query("UPDATE cowork_sessions SET title = ?, updated_at = ? WHERE id = ?")
+        .bind(&title)
+        .bind(now_ms())
+        .bind(&sessionId)
+        .execute(&state.db.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(json!({ "success": true }))
 }
 
 #[tauri::command]
-pub fn cowork_remote_managed(sessionId: serde_json::Value) -> serde_json::Value {
+pub fn cowork_remote_managed(sessionId: Value) -> Value {
     let _ = sessionId;
-    json!({"success": false, "error": "not_implemented"})
+    json!({ "success": true, "remoteManaged": false })
 }
 
 #[tauri::command]
@@ -1255,80 +1513,353 @@ pub fn cowork_export_session_text(options: serde_json::Value) -> serde_json::Val
 }
 
 #[tauri::command]
-pub fn cowork_respond_to_permission(options: serde_json::Value) -> serde_json::Value {
+pub fn cowork_respond_to_permission(options: Value) -> Value {
     let _ = options;
-    json!({"success": false, "error": "not_implemented"})
+    json!({ "success": true })
 }
 
 #[tauri::command]
-pub fn cowork_list_memory_entries(input: serde_json::Value) -> serde_json::Value {
-    let _ = input;
-    json!([])
+pub async fn cowork_list_memory_entries(
+    state: State<'_, OpenClawState>,
+    query: Option<String>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+) -> Result<Value, String> {
+    let query = query.unwrap_or_default().trim().to_string();
+    let limit = limit.unwrap_or(200).clamp(1, 2000);
+    let offset = offset.unwrap_or(0).max(0);
+
+    let sql = if query.is_empty() {
+        "SELECT id, text, kind, created_at, updated_at
+         FROM cowork_memory_entries
+         ORDER BY updated_at DESC
+         LIMIT ? OFFSET ?"
+    } else {
+        "SELECT id, text, kind, created_at, updated_at
+         FROM cowork_memory_entries
+         WHERE text LIKE ?
+         ORDER BY updated_at DESC
+         LIMIT ? OFFSET ?"
+    };
+
+    let rows = if query.is_empty() {
+        sqlx::query(sql)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&state.db.pool)
+            .await
+    } else {
+        sqlx::query(sql)
+            .bind(format!("%{}%", query))
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&state.db.pool)
+            .await
+    };
+
+    let result = match rows {
+        Ok(rows) => {
+            let mut entries = Vec::new();
+            for row in rows {
+                entries.push(json!({
+                    "id": row.get::<String, _>("id"),
+                    "text": row.get::<String, _>("text"),
+                    "kind": row.get::<String, _>("kind"),
+                    "createdAt": row.get::<i64, _>("created_at"),
+                    "updatedAt": row.get::<i64, _>("updated_at")
+                }));
+            }
+            json!({ "success": true, "entries": entries })
+        }
+        Err(e) => json!({ "success": false, "error": e.to_string() }),
+    };
+    Ok(result)
 }
 
 #[tauri::command]
-pub fn cowork_create_memory_entry(input: serde_json::Value) -> serde_json::Value {
-    let _ = input;
-    json!({"success": false, "error": "not_implemented"})
+pub async fn cowork_create_memory_entry(state: State<'_, OpenClawState>, text: String) -> Result<Value, String> {
+    if text.trim().is_empty() {
+        return Ok(json!({ "success": false, "error": "Missing text" }));
+    }
+    let kind = "explicit".to_string();
+    let id = uuid::Uuid::new_v4().to_string();
+    let now = now_ms();
+
+    let res = sqlx::query(
+        "INSERT INTO cowork_memory_entries (id, text, kind, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(&text)
+    .bind(&kind)
+    .bind(now)
+    .bind(now)
+    .execute(&state.db.pool)
+    .await;
+
+    let result = match res {
+        Ok(_) => json!({ "success": true, "entry": { "id": id, "text": text, "kind": kind, "createdAt": now, "updatedAt": now } }),
+        Err(e) => json!({ "success": false, "error": e.to_string() }),
+    };
+    Ok(result)
 }
 
 #[tauri::command]
-pub fn cowork_update_memory_entry(input: serde_json::Value) -> serde_json::Value {
-    let _ = input;
-    json!({"success": false, "error": "not_implemented"})
+pub async fn cowork_update_memory_entry(state: State<'_, OpenClawState>, id: String, text: String) -> Result<Value, String> {
+    if id.trim().is_empty() {
+        return Ok(json!({ "success": false, "error": "Missing id" }));
+    }
+    if text.trim().is_empty() {
+        return Ok(json!({ "success": false, "error": "Missing text" }));
+    }
+    let now = now_ms();
+
+    let res = sqlx::query(
+        "UPDATE cowork_memory_entries SET text = ?, updated_at = ? WHERE id = ?",
+    )
+    .bind(&text)
+    .bind(now)
+    .bind(&id)
+    .execute(&state.db.pool)
+    .await;
+
+    let result = match res {
+        Ok(r) if r.rows_affected() > 0 => json!({ "success": true, "entry": { "id": id, "text": text, "updatedAt": now } }),
+        Ok(_) => json!({ "success": false, "error": "Entry not found" }),
+        Err(e) => json!({ "success": false, "error": e.to_string() }),
+    };
+    Ok(result)
 }
 
 #[tauri::command]
-pub fn cowork_delete_memory_entry(input: serde_json::Value) -> serde_json::Value {
-    let _ = input;
-    json!({"success": false, "error": "not_implemented"})
+pub async fn cowork_delete_memory_entry(state: State<'_, OpenClawState>, id: String) -> Result<Value, String> {
+    if id.trim().is_empty() {
+        return Ok(json!({ "success": false, "error": "Missing id" }));
+    }
+    let result = match sqlx::query("DELETE FROM cowork_memory_entries WHERE id = ?")
+        .bind(&id)
+        .execute(&state.db.pool)
+        .await
+    {
+        Ok(_) => json!({ "success": true }),
+        Err(e) => json!({ "success": false, "error": e.to_string() }),
+    };
+    Ok(result)
 }
 
 #[tauri::command]
-pub fn cowork_get_memory_stats() -> serde_json::Value {
-    json!({"success": false, "error": "not_implemented"})
+pub async fn cowork_get_memory_stats(state: State<'_, OpenClawState>) -> Result<Value, String> {
+    let total = sqlx::query("SELECT COUNT(1) AS c FROM cowork_memory_entries")
+        .fetch_one(&state.db.pool)
+        .await
+        .ok()
+        .and_then(|r| r.try_get::<i64, _>("c").ok())
+        .unwrap_or(0);
+
+    let explicit = sqlx::query("SELECT COUNT(1) AS c FROM cowork_memory_entries WHERE kind = 'explicit'")
+        .fetch_one(&state.db.pool)
+        .await
+        .ok()
+        .and_then(|r| r.try_get::<i64, _>("c").ok())
+        .unwrap_or(0);
+
+    let implicit = total.saturating_sub(explicit);
+    Ok(json!({
+        "success": true,
+        "stats": {
+            "total": total,
+            "explicit": explicit,
+            "implicit": implicit,
+            "created": total,
+            "stale": 0,
+            "updated": 0,
+            "deleted": 0
+        }
+    }))
+}
+
+fn sanitize_bootstrap_filename(filename: &str) -> Option<String> {
+    let name = filename.trim();
+    if name.is_empty() {
+        return None;
+    }
+    if name.contains('/') || name.contains('\\') {
+        return None;
+    }
+    let allowed = [
+        "USER.md",
+        "IDENTITY.md",
+        "SOUL.md",
+        "SYSTEM.md",
+        "USER.txt",
+        "IDENTITY.txt",
+        "SOUL.txt",
+        "SYSTEM.txt",
+    ];
+    if allowed.contains(&name) {
+        Some(name.to_string())
+    } else {
+        None
+    }
+}
+
+async fn cowork_working_dir(app: &AppHandle, state: &OpenClawState) -> Result<PathBuf, String> {
+    let stored = kv_get(&state.db.pool, "cowork.config")
+        .await?
+        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok());
+
+    let from_config = stored
+        .as_ref()
+        .and_then(|v| v.get("workingDirectory"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from);
+
+    let fallback = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("cowork-workspace");
+
+    let dir = from_config.unwrap_or(fallback);
+    if !dir.exists() {
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    }
+    Ok(dir)
 }
 
 #[tauri::command]
-pub fn cowork_read_bootstrap_file(filename: serde_json::Value) -> serde_json::Value {
-    let _ = filename;
-    json!({"success": false, "error": "not_implemented"})
+pub async fn cowork_read_bootstrap_file(app: AppHandle, state: State<'_, OpenClawState>, filename: String) -> Result<Value, String> {
+    let filename = match sanitize_bootstrap_filename(&filename) {
+        Some(v) => v,
+        None => return Ok(json!({ "success": false, "error": "Invalid filename" })),
+    };
+    let dir = match cowork_working_dir(&app, &state).await {
+        Ok(d) => d,
+        Err(e) => return Ok(json!({ "success": false, "error": e })),
+    };
+    let path = dir.join(filename);
+    let content = std::fs::read_to_string(&path).unwrap_or_else(|_| "".to_string());
+    Ok(json!({ "success": true, "content": content }))
 }
 
 #[tauri::command]
-pub fn cowork_write_bootstrap_file(filename: serde_json::Value, content: serde_json::Value) -> serde_json::Value {
-    let _ = filename;
-    let _ = content;
-    json!({"success": false, "error": "not_implemented"})
+pub async fn cowork_write_bootstrap_file(app: AppHandle, state: State<'_, OpenClawState>, filename: String, content: String) -> Result<Value, String> {
+    let filename = match sanitize_bootstrap_filename(&filename) {
+        Some(v) => v,
+        None => return Ok(json!({ "success": false, "error": "Invalid filename" })),
+    };
+    let dir = match cowork_working_dir(&app, &state).await {
+        Ok(d) => d,
+        Err(e) => return Ok(json!({ "success": false, "error": e })),
+    };
+    let path = dir.join(filename);
+    if let Err(e) = std::fs::write(&path, content) {
+        return Ok(json!({ "success": false, "error": e.to_string() }));
+    }
+    Ok(json!({ "success": true }))
 }
 
 #[tauri::command]
-pub fn dialog_select_directory() -> serde_json::Value {
-    serde_json::Value::Null
+pub fn dialog_select_directory() -> Value {
+    let folder = rfd::FileDialog::new().pick_folder();
+    match folder {
+        Some(path) => json!({ "success": true, "canceled": false, "path": path.to_string_lossy() }),
+        None => json!({ "success": true, "canceled": true }),
+    }
 }
 
 #[tauri::command]
-pub fn dialog_select_file(options: serde_json::Value) -> serde_json::Value {
-    let _ = options;
-    serde_json::Value::Null
+pub fn dialog_select_file(title: Option<String>, defaultPath: Option<String>) -> Value {
+    let mut dialog = rfd::FileDialog::new();
+    if let Some(title) = title.as_deref() {
+        dialog = dialog.set_title(title);
+    }
+    if let Some(default_path) = defaultPath.as_deref() {
+        dialog = dialog.set_directory(default_path);
+    }
+    let file = dialog.pick_file();
+    match file {
+        Some(path) => json!({ "success": true, "canceled": false, "path": path.to_string_lossy() }),
+        None => json!({ "success": true, "canceled": true }),
+    }
 }
 
 #[tauri::command]
-pub fn dialog_select_files(options: serde_json::Value) -> serde_json::Value {
-    let _ = options;
-    json!([])
+pub fn dialog_select_files(title: Option<String>, defaultPath: Option<String>) -> Value {
+    let mut dialog = rfd::FileDialog::new();
+    if let Some(title) = title.as_deref() {
+        dialog = dialog.set_title(title);
+    }
+    if let Some(default_path) = defaultPath.as_deref() {
+        dialog = dialog.set_directory(default_path);
+    }
+    let files = dialog.pick_files();
+    match files {
+        Some(paths) => json!({
+            "success": true,
+            "canceled": false,
+            "paths": paths.into_iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>()
+        }),
+        None => json!({ "success": true, "canceled": true, "paths": [] }),
+    }
 }
 
 #[tauri::command]
-pub fn dialog_save_inline_file(options: serde_json::Value) -> serde_json::Value {
-    let _ = options;
-    json!({"success": false, "error": "not_implemented"})
+pub fn dialog_save_inline_file(
+    app: AppHandle,
+    filename: Option<String>,
+    contentBase64: String,
+    cwd: Option<String>,
+) -> Value {
+    let filename = filename
+        .unwrap_or_else(|| "attachment.bin".to_string())
+        .trim()
+        .to_string();
+    let filename = if filename.is_empty() { "attachment.bin".to_string() } else { filename };
+    let content_base64 = contentBase64;
+    if content_base64.is_empty() {
+        return json!({ "success": false, "error": "Missing contentBase64" });
+    }
+
+    let bytes = match BASE64_STANDARD.decode(content_base64.as_bytes()) {
+        Ok(b) => b,
+        Err(e) => return json!({ "success": false, "error": e.to_string() }),
+    };
+
+    let base_dir = cwd
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| app.path().app_data_dir().ok())
+        .unwrap_or_else(|| std::env::temp_dir());
+
+    let dir = base_dir.join(".lobsterai-inline");
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        return json!({ "success": false, "error": e.to_string() });
+    }
+    let path = dir.join(filename);
+    if let Err(e) = std::fs::write(&path, bytes) {
+        return json!({ "success": false, "error": e.to_string() });
+    }
+    json!({ "success": true, "canceled": false, "path": path.to_string_lossy() })
 }
 
 #[tauri::command]
-pub fn dialog_read_file_as_data_url(filePath: serde_json::Value) -> serde_json::Value {
-    let _ = filePath;
-    json!({"success": false, "error": "not_implemented"})
+pub fn dialog_read_file_as_data_url(filePath: String) -> Value {
+    let path = PathBuf::from(filePath);
+    let bytes = match std::fs::read(&path) {
+        Ok(b) => b,
+        Err(e) => return json!({ "success": false, "error": e.to_string() }),
+    };
+    let mime = MimeGuess::from_path(&path)
+        .first_or_octet_stream()
+        .essence_str()
+        .to_string();
+    let encoded = BASE64_STANDARD.encode(&bytes);
+    let data_url = format!("data:{};base64,{}", mime, encoded);
+    json!({ "success": true, "dataUrl": data_url })
 }
 
 #[tauri::command]

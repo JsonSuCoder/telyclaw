@@ -13,7 +13,7 @@ impl OpenClawDb {
             std::fs::create_dir_all(&app_dir).map_err(|e| e.to_string())?;
         }
         let db_path = app_dir.join("lobsterai.sqlite");
-        let db_url = format!("sqlite:{}", db_path.to_string_lossy());
+        let db_url = format!("sqlite:{}?mode=rwc", db_path.to_string_lossy());
         
         let pool = SqlitePool::connect(&db_url).await.map_err(|e| e.to_string())?;
         
@@ -106,6 +106,19 @@ impl OpenClawDb {
                 enabled INTEGER NOT NULL DEFAULT 1,
                 transport_type TEXT NOT NULL DEFAULT 'stdio',
                 config_json TEXT NOT NULL DEFAULT '{}',
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );"
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS cowork_memory_entries (
+                id TEXT PRIMARY KEY,
+                text TEXT NOT NULL,
+                kind TEXT NOT NULL DEFAULT 'explicit',
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL
             );"

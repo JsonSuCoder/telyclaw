@@ -17,6 +17,7 @@ class AgentService {
     store.dispatch(setLoading(true));
     try {
       const agents = await api.agents.list() as any;
+      console.log('Agents:', agents);
       if (agents) {
         const mappedAgents = agents.map((a) => ({
           id: a.id,

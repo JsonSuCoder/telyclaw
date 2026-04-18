@@ -24,6 +24,8 @@ import type {
   CoworkApiConfig,
   CoworkConfigUpdate,
   CoworkContinueOptions,
+  CoworkMessage,
+  CoworkPermissionRequest,
   CoworkMemoryStats,
   CoworkPermissionResult,
   CoworkSession,
@@ -74,7 +76,7 @@ class CoworkService {
     this.cleanupListeners();
 
     // Message listener - also check if session exists (for IM-created sessions)
-    const messageCleanup = cowork.onStreamMessage(async ({ sessionId, message }) => {
+    const messageCleanup = cowork.onStreamMessage(async ({ sessionId, message }: { sessionId: string; message: CoworkMessage }) => {
       // Debug: log user messages to check if imageAttachments are preserved
       if (message.type === 'user') {
         const meta = message.metadata as Record<string, unknown> | undefined;
@@ -114,13 +116,13 @@ class CoworkService {
     this.streamListenerCleanups.push(messageCleanup);
 
     // Message update listener (for streaming content updates)
-    const messageUpdateCleanup = cowork.onStreamMessageUpdate(({ sessionId, messageId, content }) => {
+    const messageUpdateCleanup = cowork.onStreamMessageUpdate(({ sessionId, messageId, content }: { sessionId: string; messageId: string; content: string }) => {
       store.dispatch(updateMessageContent({ sessionId, messageId, content }));
     });
     this.streamListenerCleanups.push(messageUpdateCleanup);
 
     // Permission request listener
-    const permissionCleanup = cowork.onStreamPermission(({ sessionId, request }) => {
+    const permissionCleanup = cowork.onStreamPermission(({ sessionId, request }: { sessionId: string; request: CoworkPermissionRequest }) => {
       store.dispatch(enqueuePendingPermission({
         sessionId,
         toolName: request.toolName,
@@ -132,20 +134,22 @@ class CoworkService {
     this.streamListenerCleanups.push(permissionCleanup);
 
     // Permission dismiss listener (timeout or server-side resolution)
-    const permissionDismissCleanup = cowork.onStreamPermissionDismiss(({ requestId }) => {
+    const permissionDismissCleanup = cowork.onStreamPermissionDismiss(({ requestId }: { requestId: string }) => {
       store.dispatch(dequeuePendingPermission({ requestId }));
     });
     this.streamListenerCleanups.push(permissionDismissCleanup);
 
     // Complete listener
-    const completeCleanup = cowork.onStreamComplete(({ sessionId }) => {
+    const completeCleanup = cowork.onStreamComplete(({ sessionId }: { sessionId: string }) => {
       store.dispatch(updateSessionStatus({ sessionId, status: 'completed' }));
+      store.dispatch(setStreaming(false));
     });
     this.streamListenerCleanups.push(completeCleanup);
 
     // Error listener
-    const errorCleanup = cowork.onStreamError(({ sessionId, error }) => {
+    const errorCleanup = cowork.onStreamError(({ sessionId, error }: { sessionId: string; error: string }) => {
       store.dispatch(updateSessionStatus({ sessionId, status: 'error' }));
+      store.dispatch(setStreaming(false));
       // Surface the error as a visible message so the user knows what happened.
       if (error) {
         store.dispatch(addMessage({
@@ -180,7 +184,7 @@ class CoworkService {
     const engineApi = tauriApi.openclaw.engine;
     if (!engineApi?.onProgress) return;
 
-    const statusCleanup = engineApi.onProgress((status) => {
+    const statusCleanup = engineApi.onProgress((status: OpenClawEngineStatus) => {
       this.notifyOpenClawStatus(status);
     });
     this.streamListenerCleanups.push(statusCleanup);
@@ -216,7 +220,7 @@ class CoworkService {
   async loadConfig(): Promise<void> {
     const [coworkResult, sessionPolicyResult] = await Promise.all([
       tauriApi.cowork.getConfig(),
-      api?.openclaw?.sessionPolicy?.get?.(),
+      tauriApi.openclaw?.sessionPolicy?.get?.(),
     ]);
     if (coworkResult?.success && coworkResult.config) {
       store.dispatch(setConfig({
@@ -230,7 +234,7 @@ class CoworkService {
 
   async loadOpenClawEngineStatus(): Promise<OpenClawEngineStatus | null> {
     this.setupOpenClawEngineListeners();
-    const engineApi = api?.openclaw?.engine;
+    const engineApi = tauriApi.openclaw?.engine;
     if (!engineApi?.getStatus) {
       return null;
     }
@@ -530,7 +534,7 @@ class CoworkService {
   }
 
   async updateSessionPolicy(config: OpenClawSessionPolicyConfig): Promise<boolean> {
-    const sessionPolicyApi = api?.openclaw?.sessionPolicy;
+    const sessionPolicyApi = tauriApi.openclaw?.sessionPolicy;
     if (!sessionPolicyApi) return false;
 
     const currentConfig = store.getState().cowork.config;
@@ -650,7 +654,7 @@ class CoworkService {
   }
 
   async installOpenClawEngine(): Promise<OpenClawEngineStatus | null> {
-    const engineApi = api?.openclaw?.engine;
+    const engineApi = tauriApi.openclaw?.engine;
     if (!engineApi?.install) {
       return null;
     }
@@ -663,7 +667,7 @@ class CoworkService {
   }
 
   async retryOpenClawInstall(): Promise<OpenClawEngineStatus | null> {
-    const engineApi = api?.openclaw?.engine;
+    const engineApi = tauriApi.openclaw?.engine;
     if (!engineApi?.retryInstall) {
       return null;
     }
@@ -676,7 +680,7 @@ class CoworkService {
   }
 
   async restartOpenClawGateway(): Promise<OpenClawEngineStatus | null> {
-    const engineApi = api?.openclaw?.engine;
+    const engineApi = tauriApi.openclaw?.engine;
     if (!engineApi?.restartGateway) {
       return null;
     }

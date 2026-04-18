@@ -141,7 +141,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
       // Load quick actions with localization
       try {
         quickActionService.initialize();
-        const actions = await quickActionService.getLocalizedActions();
+        const actions = quickActionService.getLocalizedActions();
         dispatch(setActions(actions));
       } catch (error) {
         console.error('Failed to load quick actions:', error);
@@ -166,9 +166,9 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
     });
 
     // Subscribe to language changes to reload quick actions
-    const unsubscribe = quickActionService.subscribe(async () => {
+    const unsubscribe = quickActionService.subscribe(() => {
       try {
-        const actions = await quickActionService.getLocalizedActions();
+        const actions = quickActionService.getLocalizedActions();
         dispatch(setActions(actions));
       } catch (error) {
         console.error('Failed to reload quick actions:', error);

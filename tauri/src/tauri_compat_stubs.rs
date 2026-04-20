@@ -269,24 +269,418 @@ pub async fn skills_delete(
     skills_list(app, state).await
 }
 
-#[tauri::command]
-pub fn skills_download(source: serde_json::Value) -> serde_json::Value {
-    let _ = source;
-    json!({"success": false, "error": "not_implemented"})
+/// Ensure the user's SKILLs directory exists and return its path
+fn ensure_skills_root(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("SKILLs");
+    if !dir.exists() {
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    }
+    Ok(dir)
+}
+
+/// Normalize a folder name to be safe for filesystem
+fn normalize_folder_name(name: &str) -> String {
+    let re = regex::Regex::new(r"[^a-zA-Z0-9\-_]+").unwrap();
+    let normalized = re.replace_all(name, "-").to_string();
+    let trimmed = normalized.trim_matches('-').to_string();
+    if trimmed.is_empty() {
+        "skill".to_string()
+    } else {
+        trimmed
+    }
+}
+
+/// Find all directories containing SKILL.md in a given root
+fn find_skill_dirs(root: &std::path::Path) -> Vec<PathBuf> {
+    let mut result = Vec::new();
+
+    // Check if root itself is a skill
+    if root.join("SKILL.md").exists() {
+        result.push(root.to_path_buf());
+        return result;
+    }
+
+    // Check for SKILLs subdirectory
+    let skills_subdir = root.join("SKILLs");
+    if skills_subdir.exists() && skills_subdir.is_dir() {
+        if let Ok(entries) = std::fs::read_dir(&skills_subdir) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_dir() && p.join("SKILL.md").exists() {
+                    result.push(p);
+                }
+            }
+        }
+        if !result.is_empty() {
+            return result;
+        }
+    }
+
+    // Check direct children
+    if let Ok(entries) = std::fs::read_dir(root) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() && p.join("SKILL.md").exists() {
+                result.push(p);
+            }
+        }
+    }
+
+    result
+}
+
+/// Parse GitHub URL to extract owner/repo and optional ref/subpath
+fn parse_github_url(url: &str) -> Option<(String, String, Option<String>, Option<String>)> {
+    // Handle github.com URLs
+    let url_obj = url::Url::parse(url).ok()?;
+    if !["github.com", "www.github.com"].contains(&url_obj.host_str()?) {
+        return None;
+    }
+
+    let segments: Vec<&str> = url_obj.path().trim_matches('/').split('/').collect();
+    if segments.len() < 2 {
+        return None;
+    }
+
+    let owner = segments[0].to_string();
+    let repo = segments[1].trim_end_matches(".git").to_string();
+
+    // Check for tree/blob URLs: /owner/repo/tree/ref/path or /owner/repo/blob/ref/path
+    if segments.len() >= 4 && (segments[2] == "tree" || segments[2] == "blob") {
+        let git_ref = segments[3].to_string();
+        let subpath = if segments.len() > 4 {
+            Some(segments[4..].join("/"))
+        } else {
+            None
+        };
+        return Some((owner, repo, Some(git_ref), subpath));
+    }
+
+    Some((owner, repo, None, None))
+}
+
+/// Parse GitHub shorthand (owner/repo)
+fn parse_github_shorthand(source: &str) -> Option<(String, String)> {
+    let re = regex::Regex::new(r"^[\w.\-]+/[\w.\-]+$").unwrap();
+    if re.is_match(source) {
+        let parts: Vec<&str> = source.split('/').collect();
+        if parts.len() == 2 {
+            return Some((parts[0].to_string(), parts[1].to_string()));
+        }
+    }
+    None
+}
+
+/// Download a GitHub repo as ZIP archive
+async fn download_github_archive(
+    owner: &str,
+    repo: &str,
+    git_ref: Option<&str>,
+    temp_dir: &std::path::Path,
+) -> Result<PathBuf, String> {
+    let client = reqwest::Client::new();
+
+    // Try different URL patterns
+    let ref_str = git_ref.unwrap_or("HEAD");
+    let urls = vec![
+        format!("https://github.com/{}/{}/archive/refs/heads/{}.zip", owner, repo, ref_str),
+        format!("https://github.com/{}/{}/archive/refs/tags/{}.zip", owner, repo, ref_str),
+        format!("https://github.com/{}/{}/archive/{}.zip", owner, repo, ref_str),
+        format!("https://api.github.com/repos/{}/{}/zipball/{}", owner, repo, ref_str),
+    ];
+
+    let mut last_error = String::from("All download attempts failed");
+
+    for url in urls {
+        eprintln!("[skills_download] Trying URL: {}", url);
+        let resp = client
+            .get(&url)
+            .header("User-Agent", "TelyClaw Skill Downloader")
+            .header("Accept", "application/vnd.github+json")
+            .send()
+            .await;
+
+        match resp {
+            Ok(r) if r.status().is_success() => {
+                let bytes = r.bytes().await.map_err(|e| e.to_string())?;
+                let zip_path = temp_dir.join("archive.zip");
+                std::fs::write(&zip_path, &bytes).map_err(|e| e.to_string())?;
+
+                // Extract ZIP
+                let extract_dir = temp_dir.join("extracted");
+                std::fs::create_dir_all(&extract_dir).map_err(|e| e.to_string())?;
+
+                let file = std::fs::File::open(&zip_path).map_err(|e| e.to_string())?;
+                let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
+                archive.extract(&extract_dir).map_err(|e| e.to_string())?;
+
+                // Find the extracted directory (GitHub archives have a single root dir)
+                let entries: Vec<_> = std::fs::read_dir(&extract_dir)
+                    .map_err(|e| e.to_string())?
+                    .flatten()
+                    .filter(|e| e.path().is_dir())
+                    .collect();
+
+                if entries.len() == 1 {
+                    return Ok(entries[0].path());
+                }
+                return Ok(extract_dir);
+            }
+            Ok(r) => {
+                last_error = format!("HTTP {}: {}", r.status(), url);
+            }
+            Err(e) => {
+                last_error = e.to_string();
+            }
+        }
+    }
+
+    Err(last_error)
+}
+
+/// Download a remote ZIP file
+async fn download_zip_url(url: &str, temp_dir: &std::path::Path) -> Result<PathBuf, String> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(url)
+        .header("User-Agent", "TelyClaw Skill Downloader")
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !resp.status().is_success() {
+        return Err(format!("Download failed: HTTP {}", resp.status()));
+    }
+
+    let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
+    let zip_path = temp_dir.join("remote.zip");
+    std::fs::write(&zip_path, &bytes).map_err(|e| e.to_string())?;
+
+    let extract_dir = temp_dir.join("extracted");
+    std::fs::create_dir_all(&extract_dir).map_err(|e| e.to_string())?;
+
+    let file = std::fs::File::open(&zip_path).map_err(|e| e.to_string())?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
+    archive.extract(&extract_dir).map_err(|e| e.to_string())?;
+
+    // Check if there's a single root directory
+    let entries: Vec<_> = std::fs::read_dir(&extract_dir)
+        .map_err(|e| e.to_string())?
+        .flatten()
+        .filter(|e| e.path().is_dir())
+        .collect();
+
+    if entries.len() == 1 {
+        return Ok(entries[0].path());
+    }
+    Ok(extract_dir)
+}
+
+/// Copy directory recursively
+fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<(), String> {
+    if !dst.exists() {
+        std::fs::create_dir_all(dst).map_err(|e| e.to_string())?;
+    }
+
+    for entry in std::fs::read_dir(src).map_err(|e| e.to_string())?.flatten() {
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+
+        if src_path.is_dir() {
+            // Skip .git directories
+            if src_path.file_name().map(|n| n == ".git").unwrap_or(false) {
+                continue;
+            }
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else {
+            std::fs::copy(&src_path, &dst_path).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
-pub fn skills_upgrade(skillId: serde_json::Value, downloadUrl: serde_json::Value) -> serde_json::Value {
-    let _ = skillId;
-    let _ = downloadUrl;
-    json!({"success": false, "error": "not_implemented"})
+pub async fn skills_download(
+    app: AppHandle,
+    state: State<'_, OpenClawState>,
+    source: String,
+) -> Result<Value, String> {
+    let source = source.trim();
+    if source.is_empty() {
+        return Ok(json!({"success": false, "error": "Missing skill source"}));
+    }
+
+    eprintln!("[skills_download] source={}", source);
+
+    let skills_root = ensure_skills_root(&app)?;
+    let temp_dir = tempfile::tempdir().map_err(|e| e.to_string())?;
+    let temp_path = temp_dir.path();
+
+    // Determine source type and get skill directory
+    let skill_source_dir: PathBuf = if std::path::Path::new(source).exists() {
+        // Local path
+        let local_path = std::path::Path::new(source);
+        if local_path.is_file() {
+            if source.to_lowercase().ends_with(".zip") {
+                // Local ZIP file
+                let extract_dir = temp_path.join("local_zip");
+                std::fs::create_dir_all(&extract_dir).map_err(|e| e.to_string())?;
+                let file = std::fs::File::open(local_path).map_err(|e| e.to_string())?;
+                let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
+                archive.extract(&extract_dir).map_err(|e| e.to_string())?;
+
+                let entries: Vec<_> = std::fs::read_dir(&extract_dir)
+                    .map_err(|e| e.to_string())?
+                    .flatten()
+                    .filter(|e| e.path().is_dir())
+                    .collect();
+
+                if entries.len() == 1 {
+                    entries[0].path()
+                } else {
+                    extract_dir
+                }
+            } else if local_path.file_name().map(|n| n == "SKILL.md").unwrap_or(false) {
+                // Direct SKILL.md file
+                local_path.parent().unwrap_or(local_path).to_path_buf()
+            } else {
+                return Ok(json!({"success": false, "error": "Source must be a directory, ZIP file, or SKILL.md"}));
+            }
+        } else {
+            local_path.to_path_buf()
+        }
+    } else if source.starts_with("http://") || source.starts_with("https://") {
+        // URL
+        if source.to_lowercase().ends_with(".zip") {
+            // Remote ZIP
+            download_zip_url(source, temp_path).await?
+        } else if let Some((owner, repo, git_ref, subpath)) = parse_github_url(source) {
+            // GitHub URL
+            let mut extracted = download_github_archive(&owner, &repo, git_ref.as_deref(), temp_path).await?;
+            if let Some(sp) = subpath {
+                extracted = extracted.join(&sp);
+                if !extracted.exists() {
+                    return Ok(json!({"success": false, "error": format!("Path '{}' not found in repository", sp)}));
+                }
+            }
+            extracted
+        } else {
+            return Ok(json!({"success": false, "error": "Unsupported URL format"}));
+        }
+    } else if let Some((owner, repo)) = parse_github_shorthand(source) {
+        // GitHub shorthand: owner/repo
+        download_github_archive(&owner, &repo, None, temp_path).await?
+    } else {
+        return Ok(json!({"success": false, "error": "Invalid skill source. Use a local path, GitHub URL, or owner/repo format."}));
+    };
+
+    // Find skill directories
+    let skill_dirs = find_skill_dirs(&skill_source_dir);
+    if skill_dirs.is_empty() {
+        return Ok(json!({"success": false, "error": "No SKILL.md found in the source"}));
+    }
+
+    eprintln!("[skills_download] Found {} skill(s)", skill_dirs.len());
+
+    // Install each skill
+    for skill_dir in skill_dirs {
+        let folder_name = normalize_folder_name(
+            skill_dir.file_name().unwrap_or_default().to_str().unwrap_or("skill")
+        );
+
+        let mut target_dir = skills_root.join(&folder_name);
+        let mut suffix = 1;
+        while target_dir.exists() {
+            target_dir = skills_root.join(format!("{}-{}", folder_name, suffix));
+            suffix += 1;
+        }
+
+        eprintln!("[skills_download] Installing {} to {:?}", folder_name, target_dir);
+        copy_dir_recursive(&skill_dir, &target_dir)?;
+    }
+
+    // Emit change event
+    let _ = app.emit("skills_changed", ());
+
+    // Return updated skills list
+    skills_list(app, state).await
+}
+
+#[tauri::command]
+pub async fn skills_upgrade(
+    app: AppHandle,
+    state: State<'_, OpenClawState>,
+    skillId: String,
+    downloadUrl: String,
+) -> Result<Value, String> {
+    // Find the existing skill
+    let skills_root = ensure_skills_root(&app)?;
+    let existing_dir = skills_root.join(&skillId);
+
+    if !existing_dir.exists() || !existing_dir.join("SKILL.md").exists() {
+        return Ok(json!({"success": false, "error": format!("Skill '{}' not found", skillId)}));
+    }
+
+    let temp_dir = tempfile::tempdir().map_err(|e| e.to_string())?;
+    let temp_path = temp_dir.path();
+
+    // Download new version
+    let new_skill_dir = if downloadUrl.to_lowercase().ends_with(".zip") {
+        download_zip_url(&downloadUrl, temp_path).await?
+    } else if let Some((owner, repo, git_ref, subpath)) = parse_github_url(&downloadUrl) {
+        let mut extracted = download_github_archive(&owner, &repo, git_ref.as_deref(), temp_path).await?;
+        if let Some(sp) = subpath {
+            extracted = extracted.join(sp);
+        }
+        extracted
+    } else if let Some((owner, repo)) = parse_github_shorthand(&downloadUrl) {
+        download_github_archive(&owner, &repo, None, temp_path).await?
+    } else {
+        return Ok(json!({"success": false, "error": "Invalid download URL"}));
+    };
+
+    let skill_dirs = find_skill_dirs(&new_skill_dir);
+    if skill_dirs.is_empty() {
+        return Ok(json!({"success": false, "error": "No SKILL.md found in the download"}));
+    }
+
+    // Use the first skill dir (or one matching the skillId)
+    let source_dir = skill_dirs.iter()
+        .find(|d| d.file_name().map(|n| n.to_string_lossy() == skillId).unwrap_or(false))
+        .unwrap_or(&skill_dirs[0]);
+
+    // Backup .env if exists
+    let env_backup = existing_dir.join(".env");
+    let env_content = if env_backup.exists() {
+        std::fs::read(&env_backup).ok()
+    } else {
+        None
+    };
+
+    // Remove old and copy new
+    std::fs::remove_dir_all(&existing_dir).map_err(|e| e.to_string())?;
+    copy_dir_recursive(source_dir, &existing_dir)?;
+
+    // Restore .env
+    if let Some(content) = env_content {
+        std::fs::write(existing_dir.join(".env"), content).map_err(|e| e.to_string())?;
+    }
+
+    let _ = app.emit("skills_changed", ());
+    skills_list(app, state).await
 }
 
 #[tauri::command]
 pub fn skills_confirm_install(pendingId: serde_json::Value, action: serde_json::Value) -> serde_json::Value {
+    // For now, we don't implement pending installs with security scanning
+    // Skills are installed directly in skills_download
     let _ = pendingId;
     let _ = action;
-    json!({"success": false, "error": "not_implemented"})
+    json!({"success": true})
 }
 
 #[tauri::command]

@@ -1,8 +1,0 @@
-/Users/qmk/work/telyclaw/telegram-tt/tauri/target/debug/deps/libcpufeatures-6d6a0df0b003ac04.rmeta: /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cpufeatures-0.2.17/src/lib.rs /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cpufeatures-0.2.17/src/aarch64.rs
-
-/Users/qmk/work/telyclaw/telegram-tt/tauri/target/debug/deps/libcpufeatures-6d6a0df0b003ac04.rlib: /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cpufeatures-0.2.17/src/lib.rs /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cpufeatures-0.2.17/src/aarch64.rs
-
-/Users/qmk/work/telyclaw/telegram-tt/tauri/target/debug/deps/cpufeatures-6d6a0df0b003ac04.d: /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cpufeatures-0.2.17/src/lib.rs /Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cpufeatures-0.2.17/src/aarch64.rs
-
-/Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cpufeatures-0.2.17/src/lib.rs:
-/Users/qmk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cpufeatures-0.2.17/src/aarch64.rs:

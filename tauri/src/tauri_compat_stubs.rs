@@ -98,7 +98,9 @@ fn resolve_skills_roots(app: &AppHandle) -> Vec<PathBuf> {
 }
 
 fn pick_existing_skills_root(roots: &[PathBuf]) -> Option<PathBuf> {
+    eprintln!("[SKILLs] Searching in {} candidate roots", roots.len());
     for root in roots {
+        eprintln!("[SKILLs] Checking: {:?} exists={} is_dir={}", root, root.exists(), root.is_dir());
         if !root.exists() || !root.is_dir() {
             continue;
         }
@@ -106,11 +108,13 @@ fn pick_existing_skills_root(roots: &[PathBuf]) -> Option<PathBuf> {
             for entry in entries.flatten() {
                 let p = entry.path();
                 if p.is_dir() && p.join("SKILL.md").exists() {
+                    eprintln!("[SKILLs] Found valid root: {:?}", root);
                     return Some(root.clone());
                 }
             }
         }
     }
+    eprintln!("[SKILLs] No valid root found!");
     None
 }
 

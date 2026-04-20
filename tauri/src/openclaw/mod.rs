@@ -14,11 +14,16 @@ pub struct OpenClawState {
 
 #[tauri::command]
 pub async fn openclaw_engine_get_status() -> serde_json::Value {
+    // Tauri version uses direct API calls instead of Gateway process,
+    // so we always report as "ready" to enable the UI.
     json!({
-        "phase": "not_installed",
-        "version": null,
-        "message": "OpenClaw engine is not fully implemented in Tauri yet.",
-        "canRetry": true
+        "success": true,
+        "status": {
+            "phase": "ready",
+            "version": "tauri-native",
+            "message": null,
+            "canRetry": false
+        }
     })
 }
 

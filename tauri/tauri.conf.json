@@ -39,7 +39,9 @@
       "providerShortName": null,
       "signingIdentity": null
     },
-    "resources": [],
+    "resources": {
+      "../src/openclaw/SKILLs": "SKILLs"
+    },
     "shortDescription": "",
     "targets": [
       "app",

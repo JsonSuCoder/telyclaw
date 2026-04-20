@@ -1,4 +1,5 @@
 pub mod db;
+pub mod mcp_bridge;
 
 use db::OpenClawDb;
 use serde_json::json;
@@ -643,4 +644,75 @@ pub async fn mcp_create(state: State<'_, OpenClawState>, data: serde_json::Value
     .map_err(|e| e.to_string())?;
 
     mcp_list(state).await
+}
+
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::collections::HashMap;
+use std::sync::Mutex;
+use std::sync::mpsc;
+
+static TELEGRAM_QUERY_ID: AtomicU64 = AtomicU64::new(1);
+
+// Store pending query channels
+lazy_static::lazy_static! {
+    static ref TELEGRAM_QUERY_CHANNELS: Mutex<HashMap<u64, mpsc::Sender<serde_json::Value>>> = Mutex::new(HashMap::new());
+}
+
+/// Query Telegram data from frontend via event bridge
+/// This is called by MCP Bridge Server to get Telegram data
+#[tauri::command]
+pub async fn telegram_query(
+    app: AppHandle,
+    query_type: String,
+    params: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let query_id = TELEGRAM_QUERY_ID.fetch_add(1, Ordering::SeqCst);
+
+    // Create a channel for the response
+    let (tx, rx) = mpsc::channel();
+
+    // Store the sender
+    {
+        let mut channels = TELEGRAM_QUERY_CHANNELS.lock().map_err(|e| e.to_string())?;
+        channels.insert(query_id, tx);
+    }
+
+    // Emit query event to frontend
+    app.emit("telegram-query", json!({
+        "queryId": query_id,
+        "queryType": query_type,
+        "params": params
+    })).map_err(|e| e.to_string())?;
+
+    // Wait for response with timeout (10 seconds)
+    match rx.recv_timeout(std::time::Duration::from_secs(10)) {
+        Ok(result) => Ok(result),
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            // Clean up on timeout
+            let mut channels = TELEGRAM_QUERY_CHANNELS.lock().map_err(|e| e.to_string())?;
+            channels.remove(&query_id);
+            Err("Query timeout".to_string())
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            Err("Query channel closed".to_string())
+        }
+    }
+}
+
+/// Called by frontend to respond to a telegram query
+#[tauri::command]
+pub async fn telegram_query_response(
+    query_id: u64,
+    result: serde_json::Value,
+) -> Result<(), String> {
+    let tx = {
+        let mut channels = TELEGRAM_QUERY_CHANNELS.lock().map_err(|e| e.to_string())?;
+        channels.remove(&query_id)
+    };
+
+    if let Some(tx) = tx {
+        tx.send(result).map_err(|_| "Failed to send response".to_string())?;
+    }
+
+    Ok(())
 }

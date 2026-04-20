@@ -880,8 +880,18 @@ pub fn mcp_fetch_marketplace() -> serde_json::Value {
 }
 
 #[tauri::command]
-pub fn mcp_refresh_bridge() -> serde_json::Value {
-    json!({"success": false, "error": "not_implemented"})
+pub fn mcp_refresh_bridge(state: tauri::State<'_, crate::openclaw::mcp_bridge::McpBridgeState>) -> serde_json::Value {
+    let port = state.port;
+    json!({
+        "success": true,
+        "config": {
+            "callbackUrl": format!("http://127.0.0.1:{}/mcp/execute", port),
+            "askUserCallbackUrl": format!("http://127.0.0.1:{}/askuser", port),
+            "telegramQueryUrl": format!("http://127.0.0.1:{}/telegram/query", port),
+            "secret": state.secret,
+            "tools": []
+        }
+    })
 }
 
 fn preset_agents() -> Vec<Value> {

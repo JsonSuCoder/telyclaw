@@ -48,6 +48,9 @@ export const tauriApi: any = {
       return () => unlisten.then(u => u());
     },
   },
+  telegram: {
+    queryResponse: (queryId: number, result: any) => invoke('telegram_query_response', { queryId, result }),
+  },
   agents: {
     list: () => invoke('agents_list'),
     get: (id: string) => invoke('agents_get', { id }),

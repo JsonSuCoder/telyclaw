@@ -42,14 +42,35 @@ type PendingAskUser = {
   timer: ReturnType<typeof setTimeout>;
 };
 
+// ── Telegram Data Query Types ────────────────────────────────────
+export type TelegramQueryRequest = {
+  requestId: string;
+  selector: string;
+  params: Record<string, unknown>;
+};
+
+export type TelegramQueryResponse = {
+  success: boolean;
+  data?: unknown;
+  error?: string;
+};
+
+type PendingTelegramQuery = {
+  requestId: string;
+  resolve: (response: TelegramQueryResponse) => void;
+  timer: ReturnType<typeof setTimeout>;
+};
+
 export class McpBridgeServer {
   private server: http.Server | null = null;
   private _port: number | null = null;
   private readonly mcpManager: McpServerManager;
   private readonly secret: string;
   private readonly pendingAskUser = new Map<string, PendingAskUser>();
+  private readonly pendingTelegramQuery = new Map<string, PendingTelegramQuery>();
   private onAskUserCallback: ((request: AskUserRequest) => void) | null = null;
   private onAskUserDismissCallback: ((requestId: string) => void) | null = null;
+  private onTelegramQueryCallback: ((request: TelegramQueryRequest) => void) | null = null;
 
   constructor(mcpManager: McpServerManager, secret: string) {
     this.mcpManager = mcpManager;
@@ -68,6 +89,10 @@ export class McpBridgeServer {
     return this._port ? `http://127.0.0.1:${this._port}/askuser` : null;
   }
 
+  get telegramQueryUrl(): string | null {
+    return this._port ? `http://127.0.0.1:${this._port}/telegram/query` : null;
+  }
+
   /**
    * Register a callback that fires when an AskUserQuestion request arrives.
    * The callback should show a modal and eventually call resolveAskUser().
@@ -82,6 +107,25 @@ export class McpBridgeServer {
    */
   onAskUserDismiss(callback: (requestId: string) => void): void {
     this.onAskUserDismissCallback = callback;
+  }
+
+  /**
+   * Register a callback that fires when a Telegram data query request arrives.
+   * The callback should execute the selector and call resolveTelegramQuery().
+   */
+  onTelegramQuery(callback: (request: TelegramQueryRequest) => void): void {
+    this.onTelegramQueryCallback = callback;
+  }
+
+  /**
+   * Resolve a pending Telegram query request (called when frontend returns data).
+   */
+  resolveTelegramQuery(requestId: string, response: TelegramQueryResponse): void {
+    const pending = this.pendingTelegramQuery.get(requestId);
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    this.pendingTelegramQuery.delete(requestId);
+    pending.resolve(response);
   }
 
   /**
@@ -164,6 +208,11 @@ export class McpBridgeServer {
       return;
     }
 
+    if (req.url?.startsWith('/telegram/query')) {
+      await this.handleTelegramQuery(req, res);
+      return;
+    }
+
     if (req.url?.startsWith('/mcp/execute')) {
       await this.handleMcpExecute(req, res);
       return;
@@ -223,6 +272,59 @@ export class McpBridgeServer {
       log('ERROR', `AskUser request error: ${errMsg}`);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ behavior: 'deny' }));
+    }
+  }
+
+  private async handleTelegramQuery(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    const TELEGRAM_QUERY_TIMEOUT_MS = 30_000;
+
+    try {
+      const body = await this.readBody(req);
+      const input = JSON.parse(body) as { selector?: string; params?: Record<string, unknown> };
+      log('INFO', `Telegram query request received, selector=${input.selector}`);
+
+      if (!input.selector) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'Missing "selector" field' }));
+        return;
+      }
+
+      const requestId = crypto.randomUUID();
+      log('INFO', `Telegram query waiting for frontend response, requestId=${requestId}`);
+
+      // Create a Promise that resolves when the frontend returns data or timeout
+      const queryResponse = await new Promise<TelegramQueryResponse>((resolve) => {
+        const timer = setTimeout(() => {
+          log('INFO', `Telegram query timeout, requestId=${requestId}`);
+          this.pendingTelegramQuery.delete(requestId);
+          resolve({ success: false, error: 'Query timeout' });
+        }, TELEGRAM_QUERY_TIMEOUT_MS);
+
+        this.pendingTelegramQuery.set(requestId, { requestId, resolve, timer });
+
+        // Notify frontend to execute the selector
+        if (this.onTelegramQueryCallback) {
+          this.onTelegramQueryCallback({
+            requestId,
+            selector: input.selector!,
+            params: input.params || {},
+          });
+        } else {
+          log('WARN', 'Telegram query callback not registered');
+          clearTimeout(timer);
+          this.pendingTelegramQuery.delete(requestId);
+          resolve({ success: false, error: 'Telegram query callback not registered' });
+        }
+      });
+
+      log('INFO', `Telegram query resolved, requestId=${requestId} success=${queryResponse.success}`);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(queryResponse));
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      log('ERROR', `Telegram query request error: ${errMsg}`);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: errMsg }));
     }
   }
 

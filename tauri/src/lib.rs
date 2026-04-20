@@ -163,6 +163,13 @@ pub fn run() {
       .expect("Failed to initialize OpenClaw DB");
     app_handle.manage(OpenClawState { db });
 
+    // Start MCP Bridge Server
+    let secret = uuid::Uuid::new_v4().to_string();
+    let app_handle_for_mcp = app.handle().clone();
+    let port = tauri::async_runtime::block_on(crate::openclaw::mcp_bridge::start_mcp_bridge_server(app_handle_for_mcp, secret))
+      .expect("Failed to start MCP Bridge Server");
+    log::info!("MCP Bridge Server started on port {}", port);
+
     // Manage app state
     app.manage(AppState::new(AppStateStruct::default()));
 
@@ -240,6 +247,8 @@ pub fn run() {
     mcp_set_enabled,
     mcp_fetch_marketplace,
     mcp_refresh_bridge,
+    crate::openclaw::mcp_bridge::resolve_ask_user,
+    crate::openclaw::mcp_bridge::resolve_telegram_query,
     agents_update,
     agents_delete,
     agents_presets,
@@ -341,7 +350,9 @@ pub fn run() {
     github_copilot_poll_for_token,
     github_copilot_cancel_polling,
     github_copilot_sign_out,
-    github_copilot_refresh_token
+    github_copilot_refresh_token,
+    telegram_query,
+    telegram_query_response
   ]);
 
   app
@@ -729,53 +740,455 @@ async fn cowork_continue_session(
     let reply = if api_key.trim().is_empty() || base_url.trim().is_empty() || model.trim().is_empty() {
       "API config missing. Please open Settings -> Model and set your API key.".to_string()
     } else {
-      let client = reqwest::Client::new();
-      let base = base_url.trim_end_matches('/').to_string();
-      let url = format!("{}/v1/messages", base);
-      let resp = client
-        .post(url)
-        .header("content-type", "application/json")
-        .header("x-api-key", api_key.clone())
-        .header("anthropic-version", "2023-06-01")
-        .json(&json!({
-          "model": model,
-          "max_tokens": 1024,
-          "system": system_prompt,
-          "messages": [{ "role": "user", "content": prompt }]
-        }))
-        .send()
+      let extract_contact_name = |input: &str| -> Option<String> {
+        let cleaned = input.replace(['<', '>', '【', '】', '（', '）'], " ");
+        let re = regex::Regex::new(r"(?:telegram\s*)?(?:好友|联系人)\s*([A-Za-z0-9_.\-\s\u4e00-\u9fff]+?)\s*(?:的|用户信息|资料|信息|$)").ok()?;
+        let caps = re.captures(&cleaned)?;
+        let name = caps.get(1)?.as_str().trim().to_string();
+        if name.is_empty() { None } else { Some(name) }
+      };
+
+      let mut forced_reply: Option<String> = None;
+      let maybe_contact_name = extract_contact_name(&prompt);
+      if let Some(contact_name) = maybe_contact_name.clone() {
+        let tool_use_id_1 = uuid::Uuid::new_v4().to_string();
+        let tool_use_id_2 = uuid::Uuid::new_v4().to_string();
+
+        let search_input = json!({ "name": contact_name, "limit": 5 });
+
+        let tool_msg_id = uuid::Uuid::new_v4().to_string();
+        let tool_ts = chrono::Utc::now().timestamp_millis();
+        let _ = sqlx::query(
+          "INSERT INTO cowork_messages (id, session_id, type, content, metadata, created_at, sequence)
+           VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&tool_msg_id)
+        .bind(&session_id_clone)
+        .bind("tool_use")
+        .bind("")
+        .bind(Some(json!({
+          "toolName": "telegram_search_user",
+          "toolInput": search_input,
+          "toolUseId": tool_use_id_1
+        }).to_string()))
+        .bind(tool_ts)
+        .bind(seq + 9)
+        .execute(&pool)
         .await;
 
-      match resp {
-        Ok(r) if r.status().is_success() => {
-          let text = r.text().await.unwrap_or_default();
-          if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
-            if let Some(arr) = v.get("content").and_then(|c| c.as_array()) {
-              let mut out = String::new();
-              for item in arr {
-                if item.get("type").and_then(|t| t.as_str()) == Some("text") {
-                  if let Some(t) = item.get("text").and_then(|t| t.as_str()) {
-                    out.push_str(t);
+        let _ = app_clone.emit("cowork_stream_message", json!({
+          "sessionId": session_id_clone,
+          "message": {
+            "id": tool_msg_id,
+            "type": "tool_use",
+            "content": "",
+            "timestamp": tool_ts,
+            "metadata": {
+              "toolName": "telegram_search_user",
+              "toolInput": search_input,
+              "toolUseId": tool_use_id_1
+            }
+          }
+        }));
+
+        let search_result = crate::openclaw::telegram_query(
+          app_clone.clone(),
+          "search_user".to_string(),
+          search_input.clone(),
+        ).await;
+
+        let search_result_value = match search_result {
+          Ok(v) => v,
+          Err(e) => json!({ "success": false, "error": e }),
+        };
+        let search_result_text = serde_json::to_string(&search_result_value).unwrap_or_else(|_| "{\"success\":false}".to_string());
+
+        let tool_result_msg_id = uuid::Uuid::new_v4().to_string();
+        let tool_result_ts = chrono::Utc::now().timestamp_millis();
+        let _ = sqlx::query(
+          "INSERT INTO cowork_messages (id, session_id, type, content, metadata, created_at, sequence)
+           VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&tool_result_msg_id)
+        .bind(&session_id_clone)
+        .bind("tool_result")
+        .bind(search_result_text.clone())
+        .bind(Some(json!({
+          "toolUseId": tool_use_id_1,
+          "toolName": "telegram_search_user",
+          "toolResult": search_result_text,
+          "isError": false
+        }).to_string()))
+        .bind(tool_result_ts)
+        .bind(seq + 10)
+        .execute(&pool)
+        .await;
+
+        let _ = app_clone.emit("cowork_stream_message", json!({
+          "sessionId": session_id_clone,
+          "message": {
+            "id": tool_result_msg_id,
+            "type": "tool_result",
+            "content": search_result_text,
+            "timestamp": tool_result_ts,
+            "metadata": {
+              "toolUseId": tool_use_id_1,
+              "toolName": "telegram_search_user",
+              "isError": false
+            }
+          }
+        }));
+
+        let mut matched_user: Option<serde_json::Value> = None;
+        if let Some(arr) = search_result_value.get("data").and_then(|v| v.as_array()) {
+          if let Some(first) = arr.first() {
+            if let Some(id) = first.get("id").and_then(|v| v.as_str()) {
+              let get_input = json!({ "userId": id });
+
+              let tool_msg_id_2 = uuid::Uuid::new_v4().to_string();
+              let tool_ts_2 = chrono::Utc::now().timestamp_millis();
+              let _ = sqlx::query(
+                "INSERT INTO cowork_messages (id, session_id, type, content, metadata, created_at, sequence)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+              )
+              .bind(&tool_msg_id_2)
+              .bind(&session_id_clone)
+              .bind("tool_use")
+              .bind("")
+              .bind(Some(json!({
+                "toolName": "telegram_get_user",
+                "toolInput": get_input,
+                "toolUseId": tool_use_id_2
+              }).to_string()))
+              .bind(tool_ts_2)
+              .bind(seq + 11)
+              .execute(&pool)
+              .await;
+
+              let _ = app_clone.emit("cowork_stream_message", json!({
+                "sessionId": session_id_clone,
+                "message": {
+                  "id": tool_msg_id_2,
+                  "type": "tool_use",
+                  "content": "",
+                  "timestamp": tool_ts_2,
+                  "metadata": {
+                    "toolName": "telegram_get_user",
+                    "toolInput": get_input,
+                    "toolUseId": tool_use_id_2
                   }
                 }
+              }));
+
+              let get_result = crate::openclaw::telegram_query(
+                app_clone.clone(),
+                "get_user".to_string(),
+                get_input.clone(),
+              ).await;
+
+              let get_value = match get_result {
+                Ok(v) => v,
+                Err(e) => json!({ "success": false, "error": e }),
+              };
+
+              let get_text = serde_json::to_string(&get_value).unwrap_or_else(|_| "{\"success\":false}".to_string());
+              let tool_result_msg_id_2 = uuid::Uuid::new_v4().to_string();
+              let tool_result_ts_2 = chrono::Utc::now().timestamp_millis();
+              let _ = sqlx::query(
+                "INSERT INTO cowork_messages (id, session_id, type, content, metadata, created_at, sequence)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+              )
+              .bind(&tool_result_msg_id_2)
+              .bind(&session_id_clone)
+              .bind("tool_result")
+              .bind(get_text.clone())
+              .bind(Some(json!({
+                "toolUseId": tool_use_id_2,
+                "toolName": "telegram_get_user",
+                "toolResult": get_text,
+                "isError": false
+              }).to_string()))
+              .bind(tool_result_ts_2)
+              .bind(seq + 12)
+              .execute(&pool)
+              .await;
+
+              let _ = app_clone.emit("cowork_stream_message", json!({
+                "sessionId": session_id_clone,
+                "message": {
+                  "id": tool_result_msg_id_2,
+                  "type": "tool_result",
+                  "content": get_text,
+                  "timestamp": tool_result_ts_2,
+                  "metadata": {
+                    "toolUseId": tool_use_id_2,
+                    "toolName": "telegram_get_user",
+                    "isError": false
+                  }
+                }
+              }));
+
+              if get_value.get("success").and_then(|v| v.as_bool()).unwrap_or(false) {
+                if let Some(data) = get_value.get("data") {
+                  matched_user = Some(data.clone());
+                }
               }
-              if !out.trim().is_empty() {
-                out
-              } else {
-                text
-              }
-            } else {
-              text
             }
-          } else {
-            text
           }
         }
-        Ok(r) => {
-          let text = r.text().await.unwrap_or_default();
-          format!("Error: {}", text)
+
+        if let Some(user) = matched_user {
+          let id = user.get("id").cloned().unwrap_or(json!(null));
+          let first_name = user.get("firstName").cloned().unwrap_or(json!(null));
+          let last_name = user.get("lastName").cloned().unwrap_or(json!(null));
+          let username = user.get("username").cloned().unwrap_or(json!(null));
+          let phone = user.get("phoneNumber").cloned().unwrap_or(json!(null));
+          let is_contact = user.get("isContact").cloned().unwrap_or(json!(null));
+          forced_reply = Some(format!(
+            "已从本地 Telegram 数据中找到用户：\n- id: {}\n- username: {}\n- firstName: {}\n- lastName: {}\n- phoneNumber: {}\n- isContact: {}",
+            id, username, first_name, last_name, phone, is_contact
+          ));
         }
-        Err(e) => format!("Error: {}", e),
+      }
+
+      if let Some(forced) = forced_reply {
+        forced
+      } else {
+        let client = reqwest::Client::new();
+        let base = base_url.trim_end_matches('/').to_string();
+        let url = format!("{}/v1/messages", base);
+        let system_for_request = format!(
+          "{}\n\n{}",
+          system_prompt,
+          "当用户询问 Telegram 联系人 / 群组 / 聊天记录等信息时，你必须优先使用可用工具获取真实数据，而不是凭空猜测。可用工具：telegram_search_user（按姓名/用户名搜索候选用户）、telegram_get_user（按 userId 获取用户对象）。"
+        );
+
+        let mut messages: Vec<serde_json::Value> = vec![json!({ "role": "user", "content": prompt })];
+        let tools = json!([
+          {
+            "name": "telegram_search_user",
+            "description": "Search Telegram users in the local app state by display name / username. Use this when the user asks about a Telegram contact by name.",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "name": { "type": "string" },
+                "limit": { "type": "integer", "minimum": 1, "maximum": 20, "default": 5 }
+              },
+              "required": ["name"]
+            }
+          },
+          {
+            "name": "telegram_get_user",
+            "description": "Get a Telegram user object from the local app state by userId.",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "userId": { "type": "string" }
+              },
+              "required": ["userId"]
+            }
+          }
+        ]);
+
+        let mut steps = 0;
+        let mut final_text = String::new();
+        loop {
+          steps += 1;
+          if steps > 6 {
+            break;
+          }
+
+          let resp = client
+            .post(&url)
+            .header("content-type", "application/json")
+            .header("x-api-key", api_key.clone())
+            .header("anthropic-version", "2023-06-01")
+            .json(&json!({
+              "model": model,
+              "max_tokens": 1024,
+              "system": system_for_request,
+              "messages": messages,
+              "tools": tools,
+            }))
+            .send()
+            .await;
+
+          let raw_text = match resp {
+            Ok(r) => r.text().await.unwrap_or_default(),
+            Err(e) => format!("Error: {}", e),
+          };
+
+          let v = match serde_json::from_str::<serde_json::Value>(&raw_text) {
+            Ok(v) => v,
+            Err(_) => {
+              final_text = raw_text;
+              break;
+            }
+          };
+
+          let content = match v.get("content").and_then(|c| c.as_array()) {
+            Some(arr) => arr.clone(),
+            None => {
+              final_text = raw_text;
+              break;
+            }
+          };
+
+          let mut tool_uses: Vec<(String, String, serde_json::Value)> = Vec::new();
+          let mut text_out = String::new();
+          for item in &content {
+            match item.get("type").and_then(|t| t.as_str()) {
+              Some("text") => {
+                if let Some(t) = item.get("text").and_then(|t| t.as_str()) {
+                  text_out.push_str(t);
+                }
+              }
+              Some("tool_use") => {
+                let id = item.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                let name = item.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                let input = item.get("input").cloned().unwrap_or_else(|| json!({}));
+                if !id.is_empty() && !name.is_empty() {
+                  tool_uses.push((id, name, input));
+                }
+              }
+              _ => {}
+            }
+          }
+
+          messages.push(json!({ "role": "assistant", "content": content }));
+
+          if tool_uses.is_empty() {
+            final_text = if !text_out.trim().is_empty() { text_out } else { raw_text };
+            break;
+          }
+
+          let mut tool_seq_offset: i64 = 0;
+          for (tool_use_id, tool_name, tool_input) in tool_uses {
+            let tool_msg_id = uuid::Uuid::new_v4().to_string();
+            let tool_ts = chrono::Utc::now().timestamp_millis();
+            let tool_name_meta = tool_name.clone();
+            let tool_input_meta = tool_input.clone();
+
+            let _ = sqlx::query(
+              "INSERT INTO cowork_messages (id, session_id, type, content, metadata, created_at, sequence)
+               VALUES (?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(&tool_msg_id)
+            .bind(&session_id_clone)
+            .bind("tool_use")
+            .bind("")
+            .bind(Some(json!({
+              "toolName": tool_name_meta,
+              "toolInput": tool_input_meta,
+              "toolUseId": tool_use_id,
+            }).to_string()))
+            .bind(tool_ts)
+            .bind(seq + 10 + tool_seq_offset)
+            .execute(&pool)
+            .await;
+            tool_seq_offset += 1;
+
+            let _ = app_clone.emit("cowork_stream_message", json!({
+              "sessionId": session_id_clone,
+              "message": {
+                "id": tool_msg_id,
+                "type": "tool_use",
+                "content": "",
+                "timestamp": tool_ts,
+                "metadata": {
+                  "toolName": &tool_name,
+                  "toolInput": &tool_input,
+                  "toolUseId": tool_use_id,
+                }
+              }
+            }));
+
+            let (tool_ok, tool_result_value) = match tool_name.as_str() {
+              "telegram_search_user" => {
+                let name = tool_input.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let limit = tool_input.get("limit").and_then(|v| v.as_i64()).unwrap_or(5);
+                let result = crate::openclaw::telegram_query(
+                  app_clone.clone(),
+                  "search_user".to_string(),
+                  json!({ "name": name, "limit": limit }),
+                ).await;
+                match result {
+                  Ok(v) => (true, v),
+                  Err(e) => (false, json!({ "success": false, "error": e })),
+                }
+              }
+              "telegram_get_user" => {
+                let user_id = tool_input.get("userId").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let result = crate::openclaw::telegram_query(
+                  app_clone.clone(),
+                  "get_user".to_string(),
+                  json!({ "userId": user_id }),
+                ).await;
+                match result {
+                  Ok(v) => (true, v),
+                  Err(e) => (false, json!({ "success": false, "error": e })),
+                }
+              }
+              _ => (false, json!({ "success": false, "error": format!("Unknown tool: {}", tool_name) })),
+            };
+
+            let tool_result_text = serde_json::to_string(&tool_result_value).unwrap_or_else(|_| "{\"success\":false}".to_string());
+
+            let tool_result_msg_id = uuid::Uuid::new_v4().to_string();
+            let tool_result_ts = chrono::Utc::now().timestamp_millis();
+
+            let _ = sqlx::query(
+              "INSERT INTO cowork_messages (id, session_id, type, content, metadata, created_at, sequence)
+               VALUES (?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(&tool_result_msg_id)
+            .bind(&session_id_clone)
+            .bind("tool_result")
+            .bind(tool_result_text.clone())
+            .bind(Some(json!({
+              "toolUseId": tool_use_id,
+              "toolName": &tool_name,
+              "toolResult": tool_result_text,
+              "isError": !tool_ok
+            }).to_string()))
+            .bind(tool_result_ts)
+            .bind(seq + 10 + tool_seq_offset)
+            .execute(&pool)
+            .await;
+            tool_seq_offset += 1;
+
+            let _ = app_clone.emit("cowork_stream_message", json!({
+              "sessionId": session_id_clone,
+              "message": {
+                "id": tool_result_msg_id,
+                "type": "tool_result",
+                "content": tool_result_text,
+                "timestamp": tool_result_ts,
+                "metadata": {
+                  "toolUseId": tool_use_id,
+                  "toolName": &tool_name,
+                  "isError": !tool_ok
+                }
+              }
+            }));
+
+            messages.push(json!({
+              "role": "user",
+              "content": [{
+                "type": "tool_result",
+                "tool_use_id": tool_use_id,
+                "content": tool_result_text,
+                "is_error": !tool_ok
+              }]
+            }));
+          }
+        }
+
+        if final_text.trim().is_empty() {
+          "Empty response".to_string()
+        } else {
+          final_text
+        }
       }
     };
 
@@ -856,8 +1269,8 @@ fn app_get_system_locale() -> String {
 
 mod openclaw;
 use openclaw::{
-    db::OpenClawDb, OpenClawState, 
-    openclaw_engine_get_status, 
+    db::OpenClawDb, OpenClawState,
+    openclaw_engine_get_status,
     cowork_list_sessions,
     cowork_get_session,
     cowork_start_session,
@@ -869,7 +1282,9 @@ use openclaw::{
     agents_get,
     agents_create,
     mcp_list,
-    mcp_create
+    mcp_create,
+    telegram_query,
+    telegram_query_response
 };
 
 pub(crate) fn open_new_window(

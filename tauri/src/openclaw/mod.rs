@@ -253,6 +253,7 @@ async fn call_model_once(
 }
 
 /// Call model with tool support - handles the full tool use loop
+/// Returns (final_text, total_tool_seq_offset)
 pub async fn call_model_with_tools(
     app: AppHandle,
     pool: sqlx::Pool<sqlx::Sqlite>,
@@ -261,7 +262,7 @@ pub async fn call_model_with_tools(
     system_prompt: String,
     initial_prompt: String,
     base_sequence: i64,
-) -> String {
+) -> (String, i64) {
     // Get tool definitions from frontend
     let tools: Vec<serde_json::Value> = {
         let result = telegram_query(
@@ -312,6 +313,7 @@ pub async fn call_model_with_tools(
 
     let mut messages: Vec<serde_json::Value> = vec![json!({ "role": "user", "content": initial_prompt })];
     let mut seq = base_sequence;
+    let mut total_tool_seq_offset: i64 = 0;
 
     let mut steps = 0;
     let mut final_text = String::new();
@@ -420,6 +422,7 @@ pub async fn call_model_with_tools(
                     "type": "tool_use",
                     "content": "",
                     "timestamp": tool_ts,
+                    "sequence": seq + 10 + tool_seq_offset - 1,
                     "metadata": {
                         "toolName": &tool_name,
                         "toolInput": &tool_input,
@@ -476,6 +479,7 @@ pub async fn call_model_with_tools(
                     "type": "tool_result",
                     "content": tool_result_text.clone(),
                     "timestamp": tool_result_ts,
+                    "sequence": seq + 10 + tool_seq_offset - 1,
                     "metadata": {
                         "toolUseId": &tool_use_id,
                         "toolName": &tool_name,
@@ -495,13 +499,15 @@ pub async fn call_model_with_tools(
             }));
         }
         seq += tool_seq_offset;
+        total_tool_seq_offset += tool_seq_offset;
     }
 
-    if final_text.trim().is_empty() {
+    let result_text = if final_text.trim().is_empty() {
         "Empty response".to_string()
     } else {
         final_text
-    }
+    };
+    (result_text, total_tool_seq_offset)
 }
 
 #[tauri::command]
@@ -573,6 +579,7 @@ pub async fn cowork_start_session(
             "type": "user",
             "content": prompt,
             "timestamp": now,
+            "sequence": 1,
             "metadata": {
                 "skillIds": active_skill_ids_val,
                 "imageAttachments": image_attachments_val
@@ -623,12 +630,13 @@ pub async fn cowork_start_session(
                 "type": "assistant",
                 "content": "",
                 "timestamp": ts,
+                "sequence": 2,
                 "metadata": { "isStreaming": true }
             }
         }));
 
         let cfg = extract_simple_api_config(&app_clone);
-        let reply = if let Some(cfg) = cfg {
+        let (reply, tool_seq_offset) = if let Some(cfg) = cfg {
             call_model_with_tools(
                 app_clone.clone(),
                 pool.clone(),
@@ -639,11 +647,14 @@ pub async fn cowork_start_session(
                 2, // base_sequence after user message (1) and assistant placeholder (2)
             ).await
         } else {
-            "API config missing. Please open Settings -> Model and set your API key.".to_string()
+            ("API config missing. Please open Settings -> Model and set your API key.".to_string(), 0)
         };
 
-        let _ = sqlx::query("UPDATE cowork_messages SET content = ? WHERE id = ?")
+        // Update sequence if tools were used (tool messages inserted between)
+        let final_sequence = 2 + tool_seq_offset;
+        let _ = sqlx::query("UPDATE cowork_messages SET content = ?, sequence = ? WHERE id = ?")
             .bind(&reply)
+            .bind(final_sequence)
             .bind(&assistant_message_id)
             .execute(&pool)
             .await;

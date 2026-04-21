@@ -216,7 +216,23 @@ const coworkSlice = createSlice({
       if (state.currentSession?.id === sessionId) {
         const exists = state.currentSession.messages.some((item) => item.id === message.id);
         if (!exists) {
-          state.currentSession.messages.push(message);
+          // Insert in sequence order (preferred) or timestamp order to handle out-of-order async events
+          const messages = state.currentSession.messages;
+          const msgSeq = message.sequence;
+          const insertIndex = messages.findIndex((m) => {
+            const mSeq = m.sequence;
+            // If both have sequence, compare by sequence
+            if (msgSeq !== undefined && mSeq !== undefined) {
+              return mSeq > msgSeq;
+            }
+            // Fall back to timestamp comparison
+            return m.timestamp > message.timestamp;
+          });
+          if (insertIndex === -1) {
+            messages.push(message);
+          } else {
+            messages.splice(insertIndex, 0, message);
+          }
           state.currentSession.updatedAt = message.timestamp;
         }
       }

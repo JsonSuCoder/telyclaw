@@ -689,6 +689,7 @@ async fn cowork_continue_session(
       "type": "user",
       "content": prompt,
       "timestamp": now,
+      "sequence": next_seq,
       "metadata": {
         "skillIds": active_skill_ids_val,
         "imageAttachments": imageAttachments
@@ -734,11 +735,11 @@ async fn cowork_continue_session(
 
     let _ = app_clone.emit("cowork_stream_message", json!({
       "sessionId": session_id_clone,
-      "message": { "id": assistant_message_id, "type": "assistant", "content": "", "timestamp": ts, "metadata": { "isStreaming": true } }
+      "message": { "id": assistant_message_id, "type": "assistant", "content": "", "timestamp": ts, "sequence": seq, "metadata": { "isStreaming": true } }
     }));
 
-    let reply = if api_key.trim().is_empty() || base_url.trim().is_empty() || model.trim().is_empty() {
-      "API config missing. Please open Settings -> Model and set your API key.".to_string()
+    let (reply, total_tool_seq_offset) = if api_key.trim().is_empty() || base_url.trim().is_empty() || model.trim().is_empty() {
+      ("API config missing. Please open Settings -> Model and set your API key.".to_string(), 0i64)
     } else {
       let client = reqwest::Client::new();
       let base = base_url.trim_end_matches('/').to_string();
@@ -787,6 +788,7 @@ async fn cowork_continue_session(
 
       let mut steps = 0;
       let mut final_text = String::new();
+      let mut total_tool_seq_offset: i64 = 0;
       loop {
         steps += 1;
         if steps > 6 {
@@ -857,7 +859,6 @@ async fn cowork_continue_session(
           break;
         }
 
-        let mut tool_seq_offset: i64 = 0;
         for (tool_use_id, tool_name, tool_input) in tool_uses {
           let tool_msg_id = uuid::Uuid::new_v4().to_string();
           let tool_ts = chrono::Utc::now().timestamp_millis();
@@ -878,10 +879,11 @@ async fn cowork_continue_session(
             "toolUseId": tool_use_id,
           }).to_string()))
           .bind(tool_ts)
-          .bind(seq + 10 + tool_seq_offset)
+          .bind(seq + 10 + total_tool_seq_offset)
           .execute(&pool)
           .await;
-          tool_seq_offset += 1;
+          let tool_use_seq = seq + 10 + total_tool_seq_offset;
+          total_tool_seq_offset += 1;
           let _ = app_clone.emit("cowork_stream_message", json!({
             "sessionId": session_id_clone,
             "message": {
@@ -889,6 +891,7 @@ async fn cowork_continue_session(
               "type": "tool_use",
               "content": "",
               "timestamp": tool_ts,
+              "sequence": tool_use_seq,
               "metadata": {
                 "toolName": &tool_name,
                 "toolInput": &tool_input,
@@ -934,10 +937,11 @@ async fn cowork_continue_session(
             "isError": !tool_ok
           }).to_string()))
           .bind(tool_result_ts)
-          .bind(seq + 10 + tool_seq_offset)
+          .bind(seq + 10 + total_tool_seq_offset)
           .execute(&pool)
           .await;
-          tool_seq_offset += 1;
+          let tool_result_seq = seq + 10 + total_tool_seq_offset;
+          total_tool_seq_offset += 1;
 
           let _ = app_clone.emit("cowork_stream_message", json!({
             "sessionId": session_id_clone,
@@ -946,6 +950,7 @@ async fn cowork_continue_session(
               "type": "tool_result",
               "content": tool_result_text,
               "timestamp": tool_result_ts,
+              "sequence": tool_result_seq,
               "metadata": {
                 "toolUseId": tool_use_id,
                 "toolName": &tool_name,
@@ -969,23 +974,56 @@ async fn cowork_continue_session(
       }
 
       if final_text.trim().is_empty() {
-        "Empty response".to_string()
+        ("Empty response".to_string(), total_tool_seq_offset)
       } else {
-        final_text
+        (final_text, total_tool_seq_offset)
       }
     };
 
-    let _ = sqlx::query("UPDATE cowork_messages SET content = ? WHERE id = ?")
+    // If tools were used, create a new assistant message with correct sequence
+    // Otherwise, update the original assistant message
+    if total_tool_seq_offset > 0 {
+      let final_msg_id = uuid::Uuid::new_v4().to_string();
+      let final_ts = chrono::Utc::now().timestamp_millis();
+      let final_seq = seq + 10 + total_tool_seq_offset;
+
+      let _ = sqlx::query(
+        "INSERT INTO cowork_messages (id, session_id, type, content, metadata, created_at, sequence)
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
+      )
+      .bind(&final_msg_id)
+      .bind(&session_id_clone)
+      .bind("assistant")
       .bind(&reply)
-      .bind(&assistant_message_id)
+      .bind(None::<String>)
+      .bind(final_ts)
+      .bind(final_seq)
       .execute(&pool)
       .await;
 
-    let _ = app_clone.emit("cowork_stream_message_update", json!({
-      "sessionId": session_id_clone,
-      "messageId": assistant_message_id,
-      "content": reply
-    }));
+      let _ = app_clone.emit("cowork_stream_message", json!({
+        "sessionId": session_id_clone,
+        "message": {
+          "id": final_msg_id,
+          "type": "assistant",
+          "content": reply,
+          "timestamp": final_ts,
+          "sequence": final_seq
+        }
+      }));
+    } else {
+      let _ = sqlx::query("UPDATE cowork_messages SET content = ? WHERE id = ?")
+        .bind(&reply)
+        .bind(&assistant_message_id)
+        .execute(&pool)
+        .await;
+
+      let _ = app_clone.emit("cowork_stream_message_update", json!({
+        "sessionId": session_id_clone,
+        "messageId": assistant_message_id,
+        "content": reply
+      }));
+    }
 
     let _ = sqlx::query("UPDATE cowork_sessions SET status = ?, updated_at = ? WHERE id = ?")
       .bind("completed")

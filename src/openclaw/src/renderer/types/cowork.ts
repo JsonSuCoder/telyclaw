@@ -50,6 +50,7 @@ export interface CoworkMessage {
   type: CoworkMessageType;
   content: string;
   timestamp: number;
+  sequence?: number;  // For ordering messages correctly
   metadata?: CoworkMessageMetadata;
 }
 

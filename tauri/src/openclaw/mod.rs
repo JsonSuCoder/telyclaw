@@ -1,5 +1,6 @@
 pub mod db;
 pub mod mcp_bridge;
+pub mod mcp_manager;
 
 use db::OpenClawDb;
 use serde_json::json;

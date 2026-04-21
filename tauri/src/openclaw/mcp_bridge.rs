@@ -1,7 +1,7 @@
 use axum::{
     extract::{Json, State},
     http::{HeaderMap, StatusCode},
-    routing::post,
+    routing::{get, post},
     Router,
 };
 use serde::{Deserialize, Serialize};
@@ -12,6 +12,8 @@ use tauri::{AppHandle, Emitter, Manager};
 use tokio::net::TcpListener;
 use tokio::sync::{oneshot, Mutex};
 use uuid::Uuid;
+
+use super::mcp_manager::{get_mcp_manager, tool_result_to_json};
 
 #[derive(Clone)]
 pub struct McpBridgeState {
@@ -83,6 +85,7 @@ pub async fn start_mcp_bridge_server(app_handle: AppHandle, secret: String) -> R
         .route("/askuser", post(handle_ask_user))
         .route("/telegram/query", post(handle_telegram_query))
         .route("/mcp/execute", post(handle_mcp_execute))
+        .route("/mcp/tools", get(handle_mcp_list_tools))
         .with_state(state.clone());
 
     // Spawn server in background
@@ -183,16 +186,58 @@ async fn handle_telegram_query(
     }
 }
 
+/// Request payload for /mcp/execute
+#[derive(Deserialize, Serialize, Clone, Debug)]
+pub struct McpExecuteRequest {
+    pub server_id: Option<String>,
+    pub tool_name: String,
+    pub arguments: Value,
+}
+
 async fn handle_mcp_execute(
-    State(_state): State<McpBridgeState>,
+    State(state): State<McpBridgeState>,
     headers: HeaderMap,
-    Json(_payload): Json<Value>,
+    Json(payload): Json<McpExecuteRequest>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    // For now, return a dummy response or error, as mcp_manager is not yet ported to Rust
-    // The main requirement was telegram query
+    if !check_auth(&headers, &state.secret).await {
+        return Err((StatusCode::UNAUTHORIZED, "Unauthorized".to_string()));
+    }
+
+    let manager = get_mcp_manager();
+
+    let result = if let Some(server_id) = payload.server_id {
+        manager
+            .call_tool(&server_id, &payload.tool_name, payload.arguments)
+            .await
+    } else {
+        manager
+            .call_tool_by_name(&payload.tool_name, payload.arguments)
+            .await
+    };
+
+    match result {
+        Ok(tool_result) => Ok(Json(tool_result_to_json(&tool_result))),
+        Err(e) => Ok(Json(json!({
+            "isError": true,
+            "content": [{ "type": "text", "text": format!("Error: {}", e) }]
+        }))),
+    }
+}
+
+async fn handle_mcp_list_tools(
+    State(state): State<McpBridgeState>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    if !check_auth(&headers, &state.secret).await {
+        return Err((StatusCode::UNAUTHORIZED, "Unauthorized".to_string()));
+    }
+
+    let manager = get_mcp_manager();
+    let tools = manager.get_tool_manifest().await;
+
     Ok(Json(json!({
-        "isError": true,
-        "content": [{ "type": "text", "text": "mcp/execute not fully implemented in Rust backend yet." }]
+        "success": true,
+        "tools": tools
     })))
 }
 

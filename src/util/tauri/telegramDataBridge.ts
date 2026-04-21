@@ -18,19 +18,6 @@ import {
   selectUserFullInfo,
 } from '../../global/selectors/users';
 
-type TelegramQueryRequest = {
-  requestId: string;
-  queryType: string;
-  params: Record<string, unknown>;
-};
-
-type TelegramQueryResponse = {
-  requestId: string;
-  success: boolean;
-  data?: unknown;
-  error?: string;
-};
-
 // Query handlers
 const queryHandlers: Record<string, (params: Record<string, unknown>) => unknown> = {
   // Get current user info
@@ -41,13 +28,44 @@ const queryHandlers: Record<string, (params: Record<string, unknown>) => unknown
     return user ? sanitizeUser(user) : null;
   },
 
-  // Get user by ID
+  // Get user by ID (camelCase)
   'getUser': (params) => {
     const global = getGlobal();
-    const userId = String(params.userId || '');
+    const userId = String(params.userId || params.user_id || '');
     if (!userId) return null;
     const user = selectUser(global, userId);
     return user ? sanitizeUser(user) : null;
+  },
+
+  // Get user by ID (snake_case alias)
+  'get_user': (params) => {
+    const global = getGlobal();
+    const userId = String(params.user_id || params.userId || '');
+    if (!userId) return null;
+    const user = selectUser(global, userId);
+    return user ? sanitizeUser(user) : null;
+  },
+
+  // Search users by name/username
+  'search_user': (params) => {
+    const global = getGlobal();
+    const query = String(params.query || '').toLowerCase();
+    const limit = Number(params.limit) || 20;
+
+    if (!query) return [];
+
+    const results: unknown[] = [];
+    for (const user of Object.values(global.users.byId)) {
+      const firstName = (user.firstName || '').toLowerCase();
+      const lastName = (user.lastName || '').toLowerCase();
+      const username = (user.usernames?.[0]?.username || '').toLowerCase();
+
+      if (firstName.includes(query) || lastName.includes(query) || username.includes(query)) {
+        results.push(sanitizeUser(user));
+        if (results.length >= limit) break;
+      }
+    }
+    return results;
   },
 
   // Get user full info
@@ -75,6 +93,21 @@ const queryHandlers: Record<string, (params: Record<string, unknown>) => unknown
     if (!chatId) return null;
     const fullInfo = selectChatFullInfo(global, chatId);
     return fullInfo ? sanitizeChatFullInfo(fullInfo) : null;
+  },
+
+  // List all chats (alias: getChats)
+  'getChats': (params) => {
+    const global = getGlobal();
+    const limit = Number(params.limit) || 50;
+    const offset = Number(params.offset) || 0;
+
+    const chatIds = global.chats.listIds?.active || [];
+    const slicedIds = chatIds.slice(offset, offset + limit);
+
+    return slicedIds.map(chatId => {
+      const chat = global.chats.byId[chatId];
+      return chat ? sanitizeChat(chat) : null;
+    }).filter(Boolean);
   },
 
   // List all chats
@@ -190,11 +223,11 @@ const queryHandlers: Record<string, (params: Record<string, unknown>) => unknown
     const byChat: Record<string, number> = {};
 
     for (const [chatId, chat] of Object.entries(chats)) {
-      const unread = chat.unreadCount || 0;
+      const unread = (chat as any).unreadCount || 0;
       if (unread > 0) {
         byChat[chatId] = unread;
         totalUnread += unread;
-        if (chat.isMuted) totalMuted += unread;
+        if ((chat as any).isMuted) totalMuted += unread;
       }
     }
 
@@ -211,6 +244,159 @@ const queryHandlers: Record<string, (params: Record<string, unknown>) => unknown
       const user = global.users.byId[userId];
       return user ? sanitizeUser(user) : null;
     }).filter(Boolean);
+  },
+
+  // Search users by name/username
+  'searchUsers': (params) => {
+    const global = getGlobal();
+    const query = String(params.query || '').toLowerCase();
+    const limit = Number(params.limit) || 20;
+
+    if (!query) return [];
+
+    const results: unknown[] = [];
+    for (const user of Object.values(global.users.byId)) {
+      const firstName = (user.firstName || '').toLowerCase();
+      const lastName = (user.lastName || '').toLowerCase();
+      const username = (user.usernames?.[0]?.username || '').toLowerCase();
+      const fullName = `${firstName} ${lastName}`.trim();
+
+      if (firstName.includes(query) || lastName.includes(query) ||
+          username.includes(query) || fullName.includes(query)) {
+        results.push(sanitizeUser(user));
+        if (results.length >= limit) break;
+      }
+    }
+    return results;
+  },
+
+  // Execute a tool call (for Claude AI)
+  'executeTool': (params) => {
+    const toolName = String(params.toolName || '');
+    const input = (params.input || {}) as Record<string, unknown>;
+
+    // Map tool names to handlers
+    const toolMapping: Record<string, { handler: string; mapParams: (i: Record<string, unknown>) => Record<string, unknown> }> = {
+      'telegram_search_user': {
+        handler: 'searchUsers',
+        mapParams: (i) => ({ query: i.query, limit: i.limit }),
+      },
+      'telegram_get_user': {
+        handler: 'getUser',
+        mapParams: (i) => ({ userId: i.user_id }),
+      },
+      'telegram_get_messages': {
+        handler: 'getMessages',
+        mapParams: (i) => ({ chatId: i.chat_id, limit: i.limit, offsetId: i.offset_id }),
+      },
+      'telegram_search_messages': {
+        handler: 'searchMessages',
+        mapParams: (i) => ({ chatId: i.chat_id, query: i.query, limit: i.limit }),
+      },
+      'telegram_list_chats': {
+        handler: 'listChats',
+        mapParams: (i) => ({ limit: i.limit, offset: i.offset }),
+      },
+      'telegram_get_chat': {
+        handler: 'getChat',
+        mapParams: (i) => ({ chatId: i.chat_id }),
+      },
+    };
+
+    const mapping = toolMapping[toolName];
+    if (!mapping) {
+      return { success: false, error: `Unknown tool: ${toolName}` };
+    }
+
+    const handler = queryHandlers[mapping.handler];
+    if (!handler) {
+      return { success: false, error: `Handler not found: ${mapping.handler}` };
+    }
+
+    try {
+      const mappedParams = mapping.mapParams(input);
+      const result = handler(mappedParams);
+      return { success: true, data: result };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+    }
+  },
+
+  // Get tool definitions for Claude AI
+  'getToolDefinitions': () => {
+    return [
+      {
+        name: 'telegram_search_user',
+        description: 'Search Telegram users by name or username. Use this when the user asks about a Telegram contact.',
+        input_schema: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: 'Name or username to search for' },
+            limit: { type: 'number', description: 'Max results (default 20)' },
+          },
+          required: ['query'],
+        },
+      },
+      {
+        name: 'telegram_get_user',
+        description: 'Get detailed info about a Telegram user by their ID.',
+        input_schema: {
+          type: 'object',
+          properties: {
+            user_id: { type: 'string', description: 'The user ID' },
+          },
+          required: ['user_id'],
+        },
+      },
+      {
+        name: 'telegram_get_messages',
+        description: 'Get recent messages from a Telegram chat.',
+        input_schema: {
+          type: 'object',
+          properties: {
+            chat_id: { type: 'string', description: 'The chat ID' },
+            limit: { type: 'number', description: 'Max messages (default 50)' },
+            offset_id: { type: 'number', description: 'Start from this message ID' },
+          },
+          required: ['chat_id'],
+        },
+      },
+      {
+        name: 'telegram_search_messages',
+        description: 'Search messages by text content.',
+        input_schema: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: 'Text to search for' },
+            chat_id: { type: 'string', description: 'Optional: limit to this chat' },
+            limit: { type: 'number', description: 'Max results (default 20)' },
+          },
+          required: ['query'],
+        },
+      },
+      {
+        name: 'telegram_list_chats',
+        description: 'List Telegram chats/conversations.',
+        input_schema: {
+          type: 'object',
+          properties: {
+            limit: { type: 'number', description: 'Max chats (default 50)' },
+            offset: { type: 'number', description: 'Skip first N chats' },
+          },
+        },
+      },
+      {
+        name: 'telegram_get_chat',
+        description: 'Get info about a specific Telegram chat.',
+        input_schema: {
+          type: 'object',
+          properties: {
+            chat_id: { type: 'string', description: 'The chat ID' },
+          },
+          required: ['chat_id'],
+        },
+      },
+    ];
   },
 };
 
@@ -293,11 +479,11 @@ export default async function setupTelegramDataBridge() {
     const { listen } = await import('@tauri-apps/api/event');
     const { invoke } = await import('@tauri-apps/api/core');
 
-    // Listen for query requests from Tauri backend (Rust side emits 'telegram-query')
+    // Listen for query requests from Tauri backend (event name: telegram-query)
     await listen<TelegramQueryEvent>('telegram-query', async (event) => {
       const { queryId, queryType, params } = event.payload;
 
-      let result: unknown;
+      let result: { success: boolean; data?: unknown; error?: string };
 
       try {
         const handler = queryHandlers[queryType];
@@ -326,9 +512,9 @@ export default async function setupTelegramDataBridge() {
           queryId,
           result,
         });
-      } catch (invokeError) {
+      } catch (err) {
         // eslint-disable-next-line no-console
-        console.error('[TelegramDataBridge] Failed to send response:', invokeError);
+        console.error('[TelegramDataBridge] Failed to send response:', err);
       }
     });
 

@@ -1,7 +1,5 @@
 import { tauriApi } from '../lib/tauri';
 import { classifyErrorKey } from '../../common/coworkErrorClassify';
-import { listen } from '@tauri-apps/api/event';
-import { getGlobal } from '../../../../global';
 import { store } from '../store';
 import {
   addMessage,
@@ -167,58 +165,8 @@ class CoworkService {
     });
     this.streamListenerCleanups.push(errorCleanup);
 
-    const telegramQueryCleanupPromise = listen('telegram-query', async (event: any) => {
-      const payload = event?.payload as { queryId?: number; queryType?: string; params?: unknown } | undefined;
-      const queryId = payload?.queryId;
-      const queryType = payload?.queryType;
-      const params = payload?.params as any;
-
-      if (!queryId || !queryType) {
-        return;
-      }
-
-      try {
-        const global = getGlobal() as any;
-        const usersById = global?.users?.byId ?? {};
-
-        if (queryType === 'search_user') {
-          const name = typeof params?.name === 'string' ? params.name.trim() : '';
-          const limit = typeof params?.limit === 'number' ? params.limit : 5;
-          const q = name.toLowerCase();
-          const results = Object.entries(usersById)
-            .map(([id, user]: any) => {
-              if (!user) return null;
-              const firstName = typeof user.firstName === 'string' ? user.firstName : '';
-              const lastName = typeof user.lastName === 'string' ? user.lastName : '';
-              const username = typeof user.username === 'string' ? user.username : '';
-              const phoneNumber = typeof user.phoneNumber === 'string' ? user.phoneNumber : '';
-              const hay = `${firstName} ${lastName} ${username} ${phoneNumber}`.toLowerCase();
-              if (!q || !hay.includes(q)) return null;
-              return { id, firstName, lastName, username, phoneNumber };
-            })
-            .filter(Boolean)
-            .slice(0, Math.max(1, Math.min(20, limit)));
-
-          await tauriApi.telegram.queryResponse(queryId, { success: true, data: results });
-          return;
-        }
-
-        if (queryType === 'get_user') {
-          const userId = typeof params?.userId === 'string' ? params.userId : String(params?.userId ?? '');
-          const user = usersById[userId] ?? null;
-          await tauriApi.telegram.queryResponse(queryId, { success: true, data: user });
-          return;
-        }
-
-        await tauriApi.telegram.queryResponse(queryId, { success: false, error: `Unknown queryType: ${queryType}` });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        await tauriApi.telegram.queryResponse(queryId, { success: false, error: message });
-      }
-    });
-    this.streamListenerCleanups.push(() => {
-      telegramQueryCleanupPromise.then((fn) => fn()).catch(() => {});
-    });
+    // NOTE: telegram-query listener is handled by telegramDataBridge.ts
+    // Do not add duplicate listener here
 
     // Sessions changed listener (new channel sessions discovered by polling)
     const sessionsChangedCleanup = cowork.onSessionsChanged(() => {

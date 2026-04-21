@@ -957,38 +957,55 @@ async fn cowork_continue_session(
         let client = reqwest::Client::new();
         let base = base_url.trim_end_matches('/').to_string();
         let url = format!("{}/v1/messages", base);
+        // Dynamically fetch tool definitions from frontend
+        let tool_defs_result = crate::openclaw::telegram_query(
+          app_clone.clone(),
+          "getToolDefinitions".to_string(),
+          json!({}),
+        ).await;
+
+        let tools = match tool_defs_result {
+          Ok(v) => {
+            println!("[DEBUG] tool_defs_result: {:?}", v);
+            // Extract the data array from { success: true, data: [...] }
+            if let Some(data) = v.get("data").and_then(|d| d.as_array()) {
+              // Convert to Claude API format (remove handler field, keep name/description/input_schema)
+              let claude_tools: Vec<serde_json::Value> = data.iter().map(|t| {
+                json!({
+                  "name": t.get("name"),
+                  "description": t.get("description"),
+                  "input_schema": t.get("input_schema")
+                })
+              }).collect();
+              println!("[DEBUG] claude_tools count: {}", claude_tools.len());
+              json!(claude_tools)
+            } else {
+              println!("[DEBUG] No data array found in tool_defs_result");
+              json!([])
+            }
+          }
+          Err(e) => {
+            println!("[DEBUG] tool_defs_result error: {}", e);
+            json!([])
+          }
+        };
+        println!("[DEBUG] Final tools: {:?}", tools);
+
+        // Build tool names for system prompt
+        let tool_names: Vec<String> = tools.as_array()
+          .map(|arr| arr.iter()
+            .filter_map(|t| t.get("name").and_then(|n| n.as_str()).map(|s| s.to_string()))
+            .collect())
+          .unwrap_or_default();
+        let tool_list_str = tool_names.join("、");
+
         let system_for_request = format!(
-          "{}\n\n{}",
+          "{}\n\n当用户询问 Telegram 联系人 / 群组 / 聊天记录等信息时，你必须优先使用可用工具获取真实数据，而不是凭空猜测。可用工具：{}。",
           system_prompt,
-          "当用户询问 Telegram 联系人 / 群组 / 聊天记录等信息时，你必须优先使用可用工具获取真实数据，而不是凭空猜测。可用工具：telegram_search_user（按姓名/用户名搜索候选用户）、telegram_get_user（按 userId 获取用户对象）。"
+          tool_list_str
         );
 
         let mut messages: Vec<serde_json::Value> = vec![json!({ "role": "user", "content": prompt })];
-        let tools = json!([
-          {
-            "name": "telegram_search_user",
-            "description": "Search Telegram users in the local app state by display name / username. Use this when the user asks about a Telegram contact by name.",
-            "input_schema": {
-              "type": "object",
-              "properties": {
-                "name": { "type": "string" },
-                "limit": { "type": "integer", "minimum": 1, "maximum": 20, "default": 5 }
-              },
-              "required": ["name"]
-            }
-          },
-          {
-            "name": "telegram_get_user",
-            "description": "Get a Telegram user object from the local app state by userId.",
-            "input_schema": {
-              "type": "object",
-              "properties": {
-                "userId": { "type": "string" }
-              },
-              "required": ["userId"]
-            }
-          }
-        ]);
 
         let mut steps = 0;
         let mut final_text = String::new();
@@ -1087,7 +1104,6 @@ async fn cowork_continue_session(
             .execute(&pool)
             .await;
             tool_seq_offset += 1;
-
             let _ = app_clone.emit("cowork_stream_message", json!({
               "sessionId": session_id_clone,
               "message": {
@@ -1105,12 +1121,13 @@ async fn cowork_continue_session(
 
             let (tool_ok, tool_result_value) = match tool_name.as_str() {
               "telegram_search_user" => {
-                let name = tool_input.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                // Tool definition uses "query", map to frontend's "name"
+                let query = tool_input.get("query").and_then(|v| v.as_str()).unwrap_or("").to_string();
                 let limit = tool_input.get("limit").and_then(|v| v.as_i64()).unwrap_or(5);
                 let result = crate::openclaw::telegram_query(
                   app_clone.clone(),
                   "search_user".to_string(),
-                  json!({ "name": name, "limit": limit }),
+                  json!({ "name": query, "limit": limit }),
                 ).await;
                 match result {
                   Ok(v) => (true, v),
@@ -1118,11 +1135,75 @@ async fn cowork_continue_session(
                 }
               }
               "telegram_get_user" => {
-                let user_id = tool_input.get("userId").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                // Tool definition uses "user_id" (snake_case)
+                let user_id = tool_input.get("user_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
                 let result = crate::openclaw::telegram_query(
                   app_clone.clone(),
                   "get_user".to_string(),
                   json!({ "userId": user_id }),
+                ).await;
+                match result {
+                  Ok(v) => (true, v),
+                  Err(e) => (false, json!({ "success": false, "error": e })),
+                }
+              }
+              "telegram_get_messages" => {
+                // Tool definition uses "chat_id", "offset_id" (snake_case)
+                let chat_id = tool_input.get("chat_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let limit = tool_input.get("limit").and_then(|v| v.as_i64()).unwrap_or(50);
+                let offset_id = tool_input.get("offset_id").and_then(|v| v.as_i64());
+                let mut params = json!({ "chatId": chat_id, "limit": limit });
+                if let Some(oid) = offset_id {
+                  params["offsetId"] = json!(oid);
+                }
+                let result = crate::openclaw::telegram_query(
+                  app_clone.clone(),
+                  "getMessages".to_string(),
+                  params,
+                ).await;
+                match result {
+                  Ok(v) => (true, v),
+                  Err(e) => (false, json!({ "success": false, "error": e })),
+                }
+              }
+              "telegram_search_messages" => {
+                // Tool definition uses "chat_id" (snake_case)
+                let query = tool_input.get("query").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let chat_id = tool_input.get("chat_id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                let limit = tool_input.get("limit").and_then(|v| v.as_i64()).unwrap_or(20);
+                let mut params = json!({ "query": query, "limit": limit });
+                if let Some(cid) = chat_id {
+                  params["chatId"] = json!(cid);
+                }
+                let result = crate::openclaw::telegram_query(
+                  app_clone.clone(),
+                  "searchMessages".to_string(),
+                  params,
+                ).await;
+                match result {
+                  Ok(v) => (true, v),
+                  Err(e) => (false, json!({ "success": false, "error": e })),
+                }
+              }
+              "telegram_list_chats" => {
+                let limit = tool_input.get("limit").and_then(|v| v.as_i64()).unwrap_or(50);
+                let offset = tool_input.get("offset").and_then(|v| v.as_i64()).unwrap_or(0);
+                let result = crate::openclaw::telegram_query(
+                  app_clone.clone(),
+                  "getChats".to_string(),
+                  json!({ "limit": limit, "offset": offset }),
+                ).await;
+                match result {
+                  Ok(v) => (true, v),
+                  Err(e) => (false, json!({ "success": false, "error": e })),
+                }
+              }
+              "telegram_get_chat" => {
+                let chat_id = tool_input.get("chat_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let result = crate::openclaw::telegram_query(
+                  app_clone.clone(),
+                  "getChat".to_string(),
+                  json!({ "chatId": chat_id }),
                 ).await;
                 match result {
                   Ok(v) => (true, v),
@@ -1182,6 +1263,8 @@ async fn cowork_continue_session(
               }]
             }));
           }
+          // Continue the loop to send tool results back to Claude
+          continue;
         }
 
         if final_text.trim().is_empty() {

@@ -3,7 +3,8 @@
     "allow": [
       "Bash(cargo check *)",
       "Bash(find tauri *)",
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "Bash(cargo build *)"
     ]
   }
 }

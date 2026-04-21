@@ -778,7 +778,7 @@ async fn cowork_continue_session(
       println!("[DEBUG] Final tools: {:?}", tools);
 
       let system_for_request = if system_prompt.trim().is_empty() {
-        "You are a helpful assistant with access to Telegram data tools. Use the available tools to fetch real data when the user asks about contacts, chats, or messages.".to_string()
+        openclaw::default_system_prompt::DEFAULT_SYSTEM_PROMPT.to_string()
       } else {
         system_prompt.clone()
       };

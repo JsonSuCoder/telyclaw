@@ -12,7 +12,6 @@ import { OpenClawSessionKeepAlive } from '../openclawSessionPolicy/constants';
 import { buildOpenClawSessionConfig } from '../openclawSessionPolicy/store';
 import { getAllServerModelMetadata, resolveAllEnabledProviderConfigs, resolveAllProviderApiKeys, resolveRawApiConfig } from './claudeSettings';
 import { getCoworkOpenAICompatProxyBaseURL, getCoworkOpenAICompatProxyToken } from './coworkOpenAICompatProxy';
-import type { McpToolManifestEntry } from './mcpServerManager';
 import {
   buildAgentEntry,
   buildManagedAgentEntries,
@@ -24,6 +23,13 @@ import { parseChannelSessionKey } from './openclawChannelSessionSync';
 import type { OpenClawEngineManager } from './openclawEngineManager';
 import { hasBundledOpenClawExtension } from './openclawLocalExtensions';
 import { getOpenClawTokenProxyPort } from './openclawTokenProxy';
+
+export interface McpToolManifestEntry {
+  server: string;
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+}
 
 export type McpBridgeConfig = {
   callbackUrl: string;

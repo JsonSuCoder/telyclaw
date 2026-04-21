@@ -1,4 +1,5 @@
 pub mod db;
+pub mod default_system_prompt;
 pub mod mcp_bridge;
 pub mod mcp_manager;
 

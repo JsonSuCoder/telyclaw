@@ -3,7 +3,6 @@ import { ShieldCheckIcon } from '@heroicons/react/24/outline';
 import React, { useEffect, useRef,useState } from 'react';
 import { useDispatch,useSelector } from 'react-redux';
 
-import { agentService } from '../../services/agent';
 import { coworkService } from '../../services/cowork';
 import { i18nService } from '../../services/i18n';
 import { quickActionService } from '../../services/quickAction';
@@ -19,10 +18,8 @@ import { addMessage, clearCurrentSession, setCurrentSession, setStreaming, updat
 import { clearSelection,selectAction, setActions } from '../../store/slices/quickActionSlice';
 import { clearActiveSkills, setActiveSkillIds } from '../../store/slices/skillSlice';
 import type { CoworkImageAttachment, CoworkSession, OpenClawEngineStatus } from '../../types/cowork';
-import { toOpenClawModelRef } from '../../utils/openclawModelRef';
 import ComposeIcon from '../icons/ComposeIcon';
 import SidebarToggleIcon from '../icons/SidebarToggleIcon';
-import ModelSelector from '../ModelSelector';
 import { PromptPanel,QuickActionBar } from '../quick-actions';
 import type { SettingsOpenOptions } from '../Settings';
 import WindowTitleBar from '../window/WindowTitleBar';
@@ -72,9 +69,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
   const availableModels = useSelector((state: RootState) => state.model.availableModels);
   const globalSelectedModel = useSelector((state: RootState) => state.model.selectedModel);
   const currentAgent = agents.find((agent) => agent.id === currentAgentId);
-  const {
-    selectedModel: headerSelectedModel,
-  } = resolveAgentModelSelection({
+  resolveAgentModelSelection({
     agentModel: currentAgent?.model ?? '',
     availableModels,
     fallbackModel: globalSelectedModel,
@@ -504,15 +499,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
             {updateBadge}
           </div>
         )}
-        <ModelSelector
-          value={isOpenClawEngine ? headerSelectedModel : undefined}
-          onChange={isOpenClawEngine
-            ? async (nextModel) => {
-                if (!currentAgent || !nextModel) return;
-                await agentService.updateAgent(currentAgent.id, { model: toOpenClawModelRef(nextModel) });
-              }
-            : undefined}
-        />
       </div>
       <div className="non-draggable flex items-center">
         <div className="flex items-center gap-1.5 mr-2 px-2.5 py-1">
@@ -611,6 +597,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
                   await coworkService.updateConfig({ workingDirectory: dir });
                 }}
                 showFolderSelector={true}
+                showModelSelector={true}
                 onManageSkills={() => onShowSkills?.()}
               />
             </div>

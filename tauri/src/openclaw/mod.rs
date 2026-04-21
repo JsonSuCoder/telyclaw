@@ -252,6 +252,258 @@ async fn call_model_once(
     Ok(content)
 }
 
+/// Call model with tool support - handles the full tool use loop
+pub async fn call_model_with_tools(
+    app: AppHandle,
+    pool: sqlx::Pool<sqlx::Sqlite>,
+    session_id: String,
+    cfg: &SimpleApiConfig,
+    system_prompt: String,
+    initial_prompt: String,
+    base_sequence: i64,
+) -> String {
+    // Get tool definitions from frontend
+    let tools: Vec<serde_json::Value> = {
+        let result = telegram_query(
+            app.clone(),
+            "getToolDefinitions".to_string(),
+            json!({}),
+        ).await;
+        match result {
+            Ok(v) => {
+                // Frontend returns { success: true, data: [...] }
+                let arr = v.get("data").and_then(|d| d.as_array())
+                    .or_else(|| v.as_array())
+                    .or_else(|| v.get("tools").and_then(|t| t.as_array()));
+                if let Some(arr) = arr {
+                    arr.iter().filter_map(|t| {
+                        let name = t.get("name")?.as_str()?;
+                        let desc = t.get("description").and_then(|d| d.as_str()).unwrap_or("");
+                        // Support both "input_schema" and "inputSchema"
+                        let schema = t.get("input_schema")
+                            .or_else(|| t.get("inputSchema"))
+                            .cloned()
+                            .unwrap_or_else(|| json!({"type": "object"}));
+                        Some(json!({
+                            "name": name,
+                            "description": desc,
+                            "input_schema": schema
+                        }))
+                    }).collect()
+                } else {
+                    vec![]
+                }
+            }
+            Err(_) => vec![]
+        }
+    };
+
+    let base_url = cfg.base_url.trim_end_matches('/');
+    let url = format!("{}/v1/messages", base_url);
+    let api_key = &cfg.api_key;
+    let model = &cfg.model;
+    let client = reqwest::Client::new();
+
+    let system_for_request = if system_prompt.trim().is_empty() {
+        default_system_prompt::DEFAULT_SYSTEM_PROMPT.to_string()
+    } else {
+        system_prompt
+    };
+
+    let mut messages: Vec<serde_json::Value> = vec![json!({ "role": "user", "content": initial_prompt })];
+    let mut seq = base_sequence;
+
+    let mut steps = 0;
+    let mut final_text = String::new();
+
+    loop {
+        steps += 1;
+        if steps > 6 {
+            break;
+        }
+
+        let resp = client
+            .post(&url)
+            .header("content-type", "application/json")
+            .header("x-api-key", api_key.clone())
+            .header("anthropic-version", "2023-06-01")
+            .json(&json!({
+                "model": model,
+                "max_tokens": 1024,
+                "system": system_for_request,
+                "messages": messages,
+                "tools": tools,
+            }))
+            .send()
+            .await;
+
+        let raw_text = match resp {
+            Ok(r) => r.text().await.unwrap_or_default(),
+            Err(e) => {
+                final_text = format!("Error: {}", e);
+                break;
+            }
+        };
+
+        let v = match serde_json::from_str::<serde_json::Value>(&raw_text) {
+            Ok(v) => v,
+            Err(_) => {
+                final_text = raw_text;
+                break;
+            }
+        };
+
+        let content = match v.get("content").and_then(|c| c.as_array()) {
+            Some(arr) => arr.clone(),
+            None => {
+                final_text = raw_text;
+                break;
+            }
+        };
+
+        let mut tool_uses: Vec<(String, String, serde_json::Value)> = Vec::new();
+        let mut text_out = String::new();
+        for item in &content {
+            match item.get("type").and_then(|t| t.as_str()) {
+                Some("text") => {
+                    if let Some(t) = item.get("text").and_then(|t| t.as_str()) {
+                        text_out.push_str(t);
+                    }
+                }
+                Some("tool_use") => {
+                    let id = item.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                    let name = item.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                    let input = item.get("input").cloned().unwrap_or_else(|| json!({}));
+                    if !id.is_empty() && !name.is_empty() {
+                        tool_uses.push((id, name, input));
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        messages.push(json!({ "role": "assistant", "content": content }));
+
+        if tool_uses.is_empty() {
+            final_text = if !text_out.trim().is_empty() { text_out } else { raw_text };
+            break;
+        }
+
+        let mut tool_seq_offset: i64 = 0;
+        for (tool_use_id, tool_name, tool_input) in tool_uses {
+            let tool_msg_id = uuid::Uuid::new_v4().to_string();
+            let tool_ts = chrono::Utc::now().timestamp_millis();
+
+            let _ = sqlx::query(
+                "INSERT INTO cowork_messages (id, session_id, type, content, metadata, created_at, sequence)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(&tool_msg_id)
+            .bind(&session_id)
+            .bind("tool_use")
+            .bind("")
+            .bind(Some(json!({
+                "toolName": &tool_name,
+                "toolInput": &tool_input,
+                "toolUseId": &tool_use_id,
+            }).to_string()))
+            .bind(tool_ts)
+            .bind(seq + 10 + tool_seq_offset)
+            .execute(&pool)
+            .await;
+            tool_seq_offset += 1;
+
+            let _ = app.emit("cowork_stream_message", json!({
+                "sessionId": session_id,
+                "message": {
+                    "id": tool_msg_id,
+                    "type": "tool_use",
+                    "content": "",
+                    "timestamp": tool_ts,
+                    "metadata": {
+                        "toolName": &tool_name,
+                        "toolInput": &tool_input,
+                        "toolUseId": &tool_use_id,
+                    }
+                }
+            }));
+
+            // Execute tool via frontend's unified executeTool
+            let (tool_ok, tool_result_value) = {
+                let result = telegram_query(
+                    app.clone(),
+                    "executeTool".to_string(),
+                    json!({ "toolName": tool_name, "toolInput": tool_input }),
+                ).await;
+                match result {
+                    Ok(v) => {
+                        let success = v.get("success").and_then(|s| s.as_bool()).unwrap_or(false);
+                        (success, v)
+                    }
+                    Err(e) => (false, json!({ "success": false, "error": e })),
+                }
+            };
+
+            let tool_result_text = serde_json::to_string(&tool_result_value).unwrap_or_else(|_| "{\"success\":false}".to_string());
+
+            let tool_result_msg_id = uuid::Uuid::new_v4().to_string();
+            let tool_result_ts = chrono::Utc::now().timestamp_millis();
+
+            let _ = sqlx::query(
+                "INSERT INTO cowork_messages (id, session_id, type, content, metadata, created_at, sequence)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(&tool_result_msg_id)
+            .bind(&session_id)
+            .bind("tool_result")
+            .bind(&tool_result_text)
+            .bind(Some(json!({
+                "toolUseId": &tool_use_id,
+                "toolName": &tool_name,
+                "toolResult": &tool_result_text,
+                "isError": !tool_ok
+            }).to_string()))
+            .bind(tool_result_ts)
+            .bind(seq + 10 + tool_seq_offset)
+            .execute(&pool)
+            .await;
+            tool_seq_offset += 1;
+
+            let _ = app.emit("cowork_stream_message", json!({
+                "sessionId": session_id,
+                "message": {
+                    "id": tool_result_msg_id,
+                    "type": "tool_result",
+                    "content": tool_result_text.clone(),
+                    "timestamp": tool_result_ts,
+                    "metadata": {
+                        "toolUseId": &tool_use_id,
+                        "toolName": &tool_name,
+                        "isError": !tool_ok
+                    }
+                }
+            }));
+
+            messages.push(json!({
+                "role": "user",
+                "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": tool_use_id,
+                    "content": tool_result_text,
+                    "is_error": !tool_ok
+                }]
+            }));
+        }
+        seq += tool_seq_offset;
+    }
+
+    if final_text.trim().is_empty() {
+        "Empty response".to_string()
+    } else {
+        final_text
+    }
+}
+
 #[tauri::command]
 pub async fn cowork_start_session(
     app: AppHandle,
@@ -377,10 +629,15 @@ pub async fn cowork_start_session(
 
         let cfg = extract_simple_api_config(&app_clone);
         let reply = if let Some(cfg) = cfg {
-            let history = vec![("user".to_string(), prompt.clone())];
-            call_model_once(&cfg, Some(system_prompt.clone()), history)
-                .await
-                .unwrap_or_else(|e| format!("Error: {}", e))
+            call_model_with_tools(
+                app_clone.clone(),
+                pool.clone(),
+                session_id.clone(),
+                &cfg,
+                system_prompt.clone(),
+                prompt.clone(),
+                2, // base_sequence after user message (1) and assistant placeholder (2)
+            ).await
         } else {
             "API config missing. Please open Settings -> Model and set your API key.".to_string()
         };

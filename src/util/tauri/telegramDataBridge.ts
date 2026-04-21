@@ -273,7 +273,7 @@ const queryHandlers: Record<string, (params: Record<string, unknown>) => unknown
   // Execute a tool call (for Claude AI)
   'executeTool': (params) => {
     const toolName = String(params.toolName || '');
-    const input = (params.input || {}) as Record<string, unknown>;
+    const input = (params.toolInput || params.input || {}) as Record<string, unknown>;
 
     // Map tool names to handlers
     const toolMapping: Record<string, { handler: string; mapParams: (i: Record<string, unknown>) => Record<string, unknown> }> = {

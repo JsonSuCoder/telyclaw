@@ -2,6 +2,7 @@ pub mod db;
 pub mod default_system_prompt;
 pub mod mcp_bridge;
 pub mod mcp_manager;
+pub mod scheduled_tasks;
 
 use db::OpenClawDb;
 use serde_json::json;
@@ -636,7 +637,7 @@ pub async fn cowork_start_session(
         }));
 
         let cfg = extract_simple_api_config(&app_clone);
-        let (reply, tool_seq_offset) = if let Some(cfg) = cfg {
+        let (reply, total_tool_seq_offset) = if let Some(cfg) = cfg {
             call_model_with_tools(
                 app_clone.clone(),
                 pool.clone(),
@@ -650,20 +651,56 @@ pub async fn cowork_start_session(
             ("API config missing. Please open Settings -> Model and set your API key.".to_string(), 0)
         };
 
-        // Update sequence if tools were used (tool messages inserted between)
-        let final_sequence = 2 + tool_seq_offset;
-        let _ = sqlx::query("UPDATE cowork_messages SET content = ?, sequence = ? WHERE id = ?")
+        // If tools were used, create a new assistant message with correct sequence
+        // Otherwise, update the original assistant message
+        if total_tool_seq_offset > 0 {
+            // Delete the placeholder assistant message
+            let _ = sqlx::query("DELETE FROM cowork_messages WHERE id = ?")
+                .bind(&assistant_message_id)
+                .execute(&pool)
+                .await;
+
+            let final_msg_id = uuid::Uuid::new_v4().to_string();
+            let final_ts = now_ms();
+            let final_seq = 2 + 10 + total_tool_seq_offset;
+
+            let _ = sqlx::query(
+                "INSERT INTO cowork_messages (id, session_id, type, content, metadata, created_at, sequence)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(&final_msg_id)
+            .bind(&session_id)
+            .bind("assistant")
             .bind(&reply)
-            .bind(final_sequence)
-            .bind(&assistant_message_id)
+            .bind(None::<String>)
+            .bind(final_ts)
+            .bind(final_seq)
             .execute(&pool)
             .await;
 
-        let _ = app_clone.emit("cowork_stream_message_update", json!({
-            "sessionId": session_id,
-            "messageId": assistant_message_id,
-            "content": reply
-        }));
+            let _ = app_clone.emit("cowork_stream_message", json!({
+                "sessionId": session_id,
+                "message": {
+                    "id": final_msg_id,
+                    "type": "assistant",
+                    "content": reply,
+                    "timestamp": final_ts,
+                    "sequence": final_seq
+                }
+            }));
+        } else {
+            let _ = sqlx::query("UPDATE cowork_messages SET content = ? WHERE id = ?")
+                .bind(&reply)
+                .bind(&assistant_message_id)
+                .execute(&pool)
+                .await;
+
+            let _ = app_clone.emit("cowork_stream_message_update", json!({
+                "sessionId": session_id,
+                "messageId": assistant_message_id,
+                "content": reply
+            }));
+        }
 
         let _ = sqlx::query("UPDATE cowork_sessions SET status = ?, updated_at = ? WHERE id = ?")
             .bind("completed")
@@ -985,4 +1022,344 @@ pub async fn telegram_query_response(
     }
 
     Ok(())
+}
+
+// ============================================================================
+// Scheduled Tasks Commands
+// ============================================================================
+
+#[tauri::command]
+pub async fn scheduled_tasks_list(
+    state: State<'_, OpenClawState>,
+) -> Result<serde_json::Value, String> {
+    log::info!("[scheduled_tasks_list] Listing all tasks");
+    match scheduled_tasks::db_list_tasks(&state.db).await {
+        Ok(tasks) => {
+            log::info!("[scheduled_tasks_list] Found {} tasks", tasks.len());
+            Ok(json!({ "success": true, "tasks": tasks }))
+        }
+        Err(e) => {
+            log::error!("[scheduled_tasks_list] Failed to list tasks: {}", e);
+            Err(e)
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn scheduled_tasks_get(
+    state: State<'_, OpenClawState>,
+    taskId: String,
+) -> Result<serde_json::Value, String> {
+    match scheduled_tasks::db_get_task(&state.db, &taskId).await? {
+        Some(task) => Ok(json!({ "success": true, "task": task })),
+        None => Ok(json!({ "success": false, "error": "Task not found" })),
+    }
+}
+
+#[tauri::command]
+pub async fn scheduled_tasks_create(
+    state: State<'_, OpenClawState>,
+    input: scheduled_tasks::CreateTaskInput,
+) -> Result<serde_json::Value, String> {
+    log::info!("[scheduled_tasks_create] Received input: {:?}", input);
+    match scheduled_tasks::db_create_task(&state.db, input).await {
+        Ok(task) => {
+            log::info!("[scheduled_tasks_create] Task created successfully: {:?}", task.id);
+            Ok(json!({ "success": true, "task": task }))
+        }
+        Err(e) => {
+            log::error!("[scheduled_tasks_create] Failed to create task: {}", e);
+            Err(e)
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn scheduled_tasks_update(
+    state: State<'_, OpenClawState>,
+    taskId: String,
+    input: scheduled_tasks::UpdateTaskInput,
+) -> Result<serde_json::Value, String> {
+    let task = scheduled_tasks::db_update_task(&state.db, &taskId, input).await?;
+    Ok(json!({ "success": true, "task": task }))
+}
+
+#[tauri::command]
+pub async fn scheduled_tasks_delete(
+    state: State<'_, OpenClawState>,
+    taskId: String,
+) -> Result<serde_json::Value, String> {
+    scheduled_tasks::db_delete_task(&state.db, &taskId).await?;
+    Ok(json!({ "success": true }))
+}
+
+#[tauri::command]
+pub async fn scheduled_tasks_toggle(
+    state: State<'_, OpenClawState>,
+    taskId: String,
+    enabled: bool,
+) -> Result<serde_json::Value, String> {
+    let task = scheduled_tasks::db_toggle_task(&state.db, &taskId, enabled).await?;
+    Ok(json!({ "success": true, "task": task }))
+}
+
+#[tauri::command]
+pub async fn scheduled_tasks_get_runs(
+    state: State<'_, OpenClawState>,
+    taskId: String,
+    limit: Option<i64>,
+    offset: Option<i64>,
+) -> Result<serde_json::Value, String> {
+    let limit = limit.unwrap_or(20);
+    let offset = offset.unwrap_or(0);
+    let runs = scheduled_tasks::db_list_runs(&state.db, &taskId, limit, offset).await?;
+    let total = scheduled_tasks::db_count_runs(&state.db, &taskId).await?;
+    Ok(json!({ "success": true, "runs": runs, "total": total }))
+}
+
+#[tauri::command]
+pub async fn scheduled_tasks_list_all_runs(
+    state: State<'_, OpenClawState>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+) -> Result<serde_json::Value, String> {
+    let limit = limit.unwrap_or(50);
+    let offset = offset.unwrap_or(0);
+    let runs = scheduled_tasks::db_list_all_runs(&state.db, limit, offset).await?;
+    Ok(json!({ "success": true, "runs": runs }))
+}
+
+#[tauri::command]
+pub async fn scheduled_tasks_run_manually(
+    app: AppHandle,
+    state: State<'_, OpenClawState>,
+    taskId: String,
+) -> Result<serde_json::Value, String> {
+    // Get the task
+    let task = scheduled_tasks::db_get_task(&state.db, &taskId).await?
+        .ok_or_else(|| "Task not found".to_string())?;
+
+    // Create a run record
+    let run = scheduled_tasks::db_create_run(&state.db, &task).await?;
+
+    // Mark task as running
+    scheduled_tasks::db_mark_task_running(&state.db, &taskId).await?;
+
+    // Emit run started event
+    let _ = app.emit("scheduled_tasks_run_update", json!({
+        "type": "started",
+        "run": &run
+    }));
+
+    // Spawn async task to execute
+    let app_clone = app.clone();
+    let pool = state.db.pool.clone();
+    let run_id = run.id.clone();
+    let task_id = taskId.clone();
+
+    tauri::async_runtime::spawn(async move {
+        let start_time = now_ms();
+        let db = db::OpenClawDb { pool: pool.clone() };
+
+        // Get the message from payload
+        let message = scheduled_tasks::get_payload_message(&task.payload);
+
+        // Create an isolated cowork session for this task run
+        let session_id = uuid::Uuid::new_v4().to_string();
+        let session_key = format!("cron:{}", task.id);
+        let now = now_ms();
+
+        // Create session in database
+        let session_result = sqlx::query(
+            "INSERT INTO cowork_sessions (id, title, status, cwd, system_prompt, execution_mode, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(&session_id)
+        .bind(format!("Scheduled: {}", task.name))
+        .bind("running")
+        .bind("")
+        .bind("")
+        .bind("local")
+        .bind(now)
+        .bind(now)
+        .execute(&pool)
+        .await;
+
+        if let Err(e) = session_result {
+            log::error!("[scheduled_task_run] Failed to create session: {}", e);
+            let _ = scheduled_tasks::db_complete_run(&db, &run_id, None, Some(&e.to_string())).await;
+            let duration_ms = now_ms() - start_time;
+            let _ = scheduled_tasks::db_mark_task_completed(&db, &task_id, false, Some(&e.to_string()), duration_ms).await;
+            return;
+        }
+
+        // Insert user message
+        let user_msg_id = uuid::Uuid::new_v4().to_string();
+        let _ = sqlx::query(
+            "INSERT INTO cowork_messages (id, session_id, type, content, metadata, created_at, sequence)
+             VALUES (?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(&user_msg_id)
+        .bind(&session_id)
+        .bind("user")
+        .bind(&message)
+        .bind("{}")
+        .bind(now)
+        .bind(1)
+        .execute(&pool)
+        .await;
+
+        // Get API config and call model
+        let cfg = extract_simple_api_config(&app_clone);
+        let (reply, _) = if let Some(cfg) = cfg {
+            call_model_with_tools(
+                app_clone.clone(),
+                pool.clone(),
+                session_id.clone(),
+                &cfg,
+                String::new(), // Use default system prompt
+                message.clone(),
+                2,
+            ).await
+        } else {
+            ("API config missing. Please configure your API key in Settings.".to_string(), 0)
+        };
+
+        // Insert assistant response
+        let assistant_msg_id = uuid::Uuid::new_v4().to_string();
+        let response_time = now_ms();
+        let _ = sqlx::query(
+            "INSERT INTO cowork_messages (id, session_id, type, content, metadata, created_at, sequence)
+             VALUES (?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(&assistant_msg_id)
+        .bind(&session_id)
+        .bind("assistant")
+        .bind(&reply)
+        .bind("{}")
+        .bind(response_time)
+        .bind(100)
+        .execute(&pool)
+        .await;
+
+        // Update session status
+        let _ = sqlx::query("UPDATE cowork_sessions SET status = ?, updated_at = ? WHERE id = ?")
+            .bind("completed")
+            .bind(response_time)
+            .bind(&session_id)
+            .execute(&pool)
+            .await;
+
+        // Handle delivery if configured
+        if let scheduled_tasks::TaskDelivery::Announce { channel, to, .. } = &task.delivery {
+            if let (Some(channel), Some(to)) = (channel, to) {
+                if channel == "telegram" {
+                    // Send result to Telegram chat
+                    let delivery_result = telegram_query(
+                        app_clone.clone(),
+                        "sendScheduledTaskResult".to_string(),
+                        json!({
+                            "chatId": to,
+                            "taskName": task.name,
+                            "result": reply
+                        }),
+                    ).await;
+
+                    if let Err(e) = delivery_result {
+                        log::warn!("[scheduled_task_run] Failed to deliver to Telegram: {}", e);
+                    }
+                }
+            }
+        }
+
+        // Complete the run
+        let duration_ms = now_ms() - start_time;
+        let completed_run = scheduled_tasks::db_complete_run(&db, &run_id, Some(&session_id), None).await;
+        let _ = scheduled_tasks::db_mark_task_completed(&db, &task_id, true, None, duration_ms).await;
+
+        // Emit completion events
+        if let Ok(run) = completed_run {
+            let _ = app_clone.emit("scheduled_tasks_run_update", json!({
+                "type": "completed",
+                "run": run
+            }));
+        }
+
+        // Emit status update
+        if let Ok(Some(updated_task)) = scheduled_tasks::db_get_task(&db, &task_id).await {
+            let _ = app_clone.emit("scheduled_tasks_status_update", json!({
+                "taskId": task_id,
+                "state": updated_task.state
+            }));
+        }
+    });
+
+    Ok(json!({ "success": true, "run": run }))
+}
+
+#[tauri::command]
+pub async fn scheduled_tasks_stop(
+    state: State<'_, OpenClawState>,
+    taskId: String,
+) -> Result<serde_json::Value, String> {
+    // Update task state to not running (clear running_at_ms)
+    let idle_state = scheduled_tasks::TaskState {
+        running_at_ms: None,
+        ..Default::default()
+    };
+    scheduled_tasks::db_update_task_state(&state.db, &taskId, &idle_state).await?;
+    Ok(json!({ "success": true }))
+}
+
+#[tauri::command]
+pub async fn scheduled_tasks_list_runs(
+    state: State<'_, OpenClawState>,
+    taskId: String,
+    limit: Option<i64>,
+    offset: Option<i64>,
+) -> Result<serde_json::Value, String> {
+    let limit = limit.unwrap_or(20);
+    let offset = offset.unwrap_or(0);
+    let runs = scheduled_tasks::db_list_runs(&state.db, &taskId, limit, offset).await?;
+    Ok(json!({ "success": true, "runs": runs }))
+}
+
+#[tauri::command]
+pub async fn scheduled_tasks_count_runs(
+    state: State<'_, OpenClawState>,
+    taskId: String,
+) -> Result<serde_json::Value, String> {
+    let total = scheduled_tasks::db_count_runs(&state.db, &taskId).await?;
+    Ok(json!({ "success": true, "total": total }))
+}
+
+#[tauri::command]
+pub async fn scheduled_tasks_resolve_session(
+    state: State<'_, OpenClawState>,
+    sessionKey: String,
+) -> Result<serde_json::Value, String> {
+    match scheduled_tasks::db_get_task_by_session_key(&state.db, &sessionKey).await? {
+        Some(task) => Ok(json!({ "success": true, "task": task })),
+        None => Ok(json!({ "success": false, "error": "No task found for session key" })),
+    }
+}
+
+#[tauri::command]
+pub async fn scheduled_tasks_list_channels(
+    _state: State<'_, OpenClawState>,
+) -> Result<serde_json::Value, String> {
+    // This would list available IM channels (Telegram, WeChat, etc.)
+    // For now, return empty list - will be implemented when IM gateway is ready
+    Ok(json!({ "success": true, "channels": [] }))
+}
+
+#[tauri::command]
+pub async fn scheduled_tasks_list_channel_conversations(
+    _state: State<'_, OpenClawState>,
+    _channelId: String,
+    _accountId: Option<String>,
+) -> Result<serde_json::Value, String> {
+    // This would list conversations in a specific channel
+    // For now, return empty list - will be implemented when IM gateway is ready
+    Ok(json!({ "success": true, "conversations": [] }))
 }

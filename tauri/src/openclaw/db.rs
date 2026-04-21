@@ -2,6 +2,7 @@ use sqlx::{sqlite::SqlitePool, Pool, Sqlite};
 use tauri::AppHandle;
 use tauri::Manager;
 
+#[derive(Clone)]
 pub struct OpenClawDb {
     pub pool: Pool<Sqlite>,
 }
@@ -122,6 +123,56 @@ impl OpenClawDb {
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL
             );"
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        // Scheduled tasks table
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS scheduled_tasks (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                enabled INTEGER NOT NULL DEFAULT 1,
+                schedule_json TEXT NOT NULL,
+                session_target TEXT NOT NULL DEFAULT 'main',
+                wake_mode TEXT NOT NULL DEFAULT 'now',
+                payload_json TEXT NOT NULL,
+                delivery_json TEXT NOT NULL DEFAULT '{}',
+                agent_id TEXT,
+                session_key TEXT,
+                state_json TEXT NOT NULL DEFAULT '{}',
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );"
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        // Scheduled task runs table
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS scheduled_task_runs (
+                id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                task_name TEXT NOT NULL,
+                session_id TEXT,
+                session_key TEXT,
+                status TEXT NOT NULL,
+                started_at INTEGER NOT NULL,
+                finished_at INTEGER,
+                duration_ms INTEGER,
+                error TEXT,
+                FOREIGN KEY (task_id) REFERENCES scheduled_tasks(id) ON DELETE CASCADE
+            );"
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_scheduled_task_runs_task_id ON scheduled_task_runs(task_id);"
         )
         .execute(&self.pool)
         .await

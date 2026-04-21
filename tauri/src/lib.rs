@@ -161,6 +161,12 @@ pub fn run() {
     let app_handle = app.handle().clone();
     let db = tauri::async_runtime::block_on(OpenClawDb::new(&app_handle))
       .expect("Failed to initialize OpenClaw DB");
+
+    // Start scheduled tasks background scheduler
+    let scheduler_db = db.clone();
+    let scheduler_app = app.handle().clone();
+    crate::openclaw::scheduled_tasks::start_scheduler(scheduler_app, scheduler_db);
+
     app_handle.manage(OpenClawState { db });
 
     // Start MCP Bridge Server
@@ -1105,7 +1111,22 @@ use openclaw::{
     mcp_list,
     mcp_create,
     telegram_query,
-    telegram_query_response
+    telegram_query_response,
+    // scheduled_tasks
+    scheduled_tasks_list,
+    scheduled_tasks_get,
+    scheduled_tasks_create,
+    scheduled_tasks_update,
+    scheduled_tasks_delete,
+    scheduled_tasks_toggle,
+    scheduled_tasks_run_manually,
+    scheduled_tasks_stop,
+    scheduled_tasks_list_runs,
+    scheduled_tasks_count_runs,
+    scheduled_tasks_list_all_runs,
+    scheduled_tasks_resolve_session,
+    scheduled_tasks_list_channels,
+    scheduled_tasks_list_channel_conversations,
 };
 
 pub(crate) fn open_new_window(

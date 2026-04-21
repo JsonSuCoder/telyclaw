@@ -247,19 +247,19 @@ export const tauriApi: any = {
   },
   scheduledTasks: {
     list: () => invoke('scheduled_tasks_list'),
-    get: (id: string) => invoke('scheduled_tasks_get', { id }),
+    get: (id: string) => invoke('scheduled_tasks_get', { taskId: id }),
     create: (input: any) => invoke('scheduled_tasks_create', { input }),
-    update: (id: string, input: any) => invoke('scheduled_tasks_update', { id, input }),
-    delete: (id: string) => invoke('scheduled_tasks_delete', { id }),
-    toggle: (id: string, enabled: boolean) => invoke('scheduled_tasks_toggle', { id, enabled }),
-    runManually: (id: string) => invoke('scheduled_tasks_run_manually', { id }),
-    stop: (id: string) => invoke('scheduled_tasks_stop', { id }),
+    update: (id: string, input: any) => invoke('scheduled_tasks_update', { taskId: id, input }),
+    delete: (id: string) => invoke('scheduled_tasks_delete', { taskId: id }),
+    toggle: (id: string, enabled: boolean) => invoke('scheduled_tasks_toggle', { taskId: id, enabled }),
+    runManually: (id: string) => invoke('scheduled_tasks_run_manually', { taskId: id }),
+    stop: (id: string) => invoke('scheduled_tasks_stop', { taskId: id }),
     listRuns: (taskId: string, limit?: number, offset?: number) => invoke('scheduled_tasks_list_runs', { taskId, limit, offset }),
     countRuns: (taskId: string) => invoke('scheduled_tasks_count_runs', { taskId }),
     listAllRuns: (limit?: number, offset?: number) => invoke('scheduled_tasks_list_all_runs', { limit, offset }),
     resolveSession: (sessionKey: string) => invoke('scheduled_tasks_resolve_session', { sessionKey }),
     listChannels: () => invoke('scheduled_tasks_list_channels'),
-    listChannelConversations: (channel: string, accountId?: string) => invoke('scheduled_tasks_list_channel_conversations', { channel, accountId }),
+    listChannelConversations: (channel: string, accountId?: string) => invoke('scheduled_tasks_list_channel_conversations', { channelId: channel, accountId }),
     onStatusUpdate: (callback: (data: any) => void) => {
       const unlisten = listen('scheduled_tasks_status_update', (event: any) => callback(event.payload));
       return () => unlisten.then(u => u());

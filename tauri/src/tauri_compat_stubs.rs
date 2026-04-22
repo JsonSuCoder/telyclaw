@@ -1539,7 +1539,8 @@ pub async fn api_stream(
     let mut req = client.request(method, url).headers(header_map);
     if let Some(body) = body {
         if body.is_string() {
-            req = req.body(body.as_str().unwrap_or("").to_string());
+            let body_str = body.as_str().unwrap_or("");
+            req = req.body(body_str.to_string());
         } else {
             req = req.body(body.to_string());
         }

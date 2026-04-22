@@ -13,3 +13,4 @@ dev/perf/screenshot*
 .github/workflows/*
 !.github/workflows/package-and-publish.yml
 /vendor/
+public/build-stats.json

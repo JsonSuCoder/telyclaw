@@ -91,6 +91,7 @@ export interface LangPair {
   'AnonymousPoll': undefined;
   'AccDescrReactionMentionDown': undefined;
   'AccDescrMentionDown': undefined;
+  'AccDescrPollVoteDown': undefined;
   'AccDescrPageDown': undefined;
   'ChannelPrivate': undefined;
   'ChannelPrivateInfo': undefined;
@@ -2032,6 +2033,10 @@ export interface LangPair {
   'EnterPasswordDescription': undefined;
   'Transfer': undefined;
   'TranslateMenuCocoonLinkText': undefined;
+  'TranslationTone': undefined;
+  'TranslationToneNeutral': undefined;
+  'TranslationToneFormal': undefined;
+  'TranslationToneCasual': undefined;
   'CocoonTitle': undefined;
   'CocoonDescription': undefined;
   'CocoonFeature1Title': undefined;
@@ -2094,7 +2099,6 @@ export interface LangPair {
   'TextShowLess': undefined;
   'AiMessageEditorFrom': undefined;
   'AiMessageEditorTo': undefined;
-  'TranslationToneNeutral': undefined;
   'ButtonHelp': undefined;
 }
 

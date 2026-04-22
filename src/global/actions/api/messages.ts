@@ -55,6 +55,7 @@ import {
   uniqueByField,
 } from '../../../util/iteratees';
 import { getMessageKey, isLocalMessageId } from '../../../util/keys/messageKey';
+import { parseTranslationCacheKey } from '../../../util/keys/translationKey';
 import { getTranslationFn, type RegularLangFnParameters } from '../../../util/localization';
 import { formatStarsAsText } from '../../../util/localization/format';
 import { oldTranslate } from '../../../util/oldLangProvider';
@@ -81,12 +82,12 @@ import {
 } from '../../index';
 import {
   addChatMessagesById,
-  addUnreadMentions,
   clearMessageSummary,
   deleteSponsoredMessage,
   removeOutlyingList,
   removeRequestedMessageTranslation,
   removeUnreadMentions,
+  removeUnreadPollVotes,
   replaceSettings,
   replaceUserStatuses,
   safeReplacePinnedIds,
@@ -106,6 +107,7 @@ import {
   updateScheduledMessages,
   updateSponsoredMessage,
   updateTopicWithState,
+  updateUnreadCounters,
   updateUploadByMessageKey,
   updateUserFullInfo,
 } from '../../reducers';
@@ -172,7 +174,6 @@ import {
   selectThreadReadState,
 } from '../../selectors/threads';
 import { deleteMessages, updateWithLocalMedia } from '../apiUpdaters/messages';
-
 const AUTOLOGIN_TOKEN_KEY = 'autologin_token';
 
 const uploadProgressCallbacks = new Map<MessageKey, ApiOnProgress>();
@@ -2287,19 +2288,45 @@ addActionHandler('loadUnreadMentions', async (global, actions, payload): Promise
 
   const { messages, topics, totalCount } = result;
 
-  const byId = buildCollectionByKey(messages, 'id');
-  const ids = Object.keys(byId).map(Number);
-
   global = getGlobal();
-  global = addChatMessagesById(global, chat.id, byId);
-  topics.forEach((topicState) => {
-    global = updateTopicWithState(global, chat.id, topicState);
-  });
-  global = addUnreadMentions({
+  global = updateUnreadCounters({
     global,
     chatId,
-    ids,
+    threadId,
+    messages,
+    topics,
     totalCount,
+    unreadCountKey: 'unreadMentionsCount',
+  });
+
+  setGlobal(global);
+});
+
+addActionHandler('loadUnreadPollVotes', async (global, actions, payload): Promise<void> => {
+  const { chatId, threadId = MAIN_THREAD_ID, offsetId } = payload;
+
+  const chat = selectChat(global, chatId);
+  if (!chat) return;
+
+  const result = await callApi('fetchUnreadPollVotes', {
+    chat,
+    threadId: threadId !== MAIN_THREAD_ID ? threadId : undefined,
+    offsetId,
+  });
+
+  if (!result) return;
+
+  const { messages, topics, totalCount } = result;
+
+  global = getGlobal();
+  global = updateUnreadCounters({
+    global,
+    chatId,
+    threadId,
+    messages,
+    topics,
+    totalCount,
+    unreadCountKey: 'unreadPollVotesCount',
   });
 
   setGlobal(global);
@@ -2391,6 +2418,21 @@ addActionHandler('markMentionsRead', (global, actions, payload): ActionReturnTyp
   actions.markMessagesRead({ chatId, messageIds });
 });
 
+addActionHandler('markPollVotesRead', (global, actions, payload): ActionReturnType => {
+  const { chatId, messageIds } = payload;
+  const chat = selectChat(global, chatId);
+  if (!chat) return;
+
+  global = removeUnreadPollVotes({
+    global,
+    chatId,
+    ids: messageIds,
+  });
+  setGlobal(global);
+
+  actions.markMessagesRead({ chatId, messageIds });
+});
+
 addActionHandler('focusNextMention', async (global, actions, payload): Promise<void> => {
   const { chatId, threadId = MAIN_THREAD_ID, tabId = getCurrentTabId() } = payload;
 
@@ -2407,6 +2449,28 @@ addActionHandler('focusNextMention', async (global, actions, payload): Promise<v
   actions.focusMessage({ chatId, messageId: readState.unreadMentions[0], tabId });
 });
 
+addActionHandler('focusNextPollVote', async (global, actions, payload): Promise<void> => {
+  const { chatId, threadId = MAIN_THREAD_ID, tabId = getCurrentTabId() } = payload;
+
+  let readState = selectThreadReadState(global, chatId, threadId);
+
+  if (!readState?.unreadPollVotes?.length) {
+    await getPromiseActions().loadUnreadPollVotes({ chatId, threadId });
+
+    global = getGlobal();
+    readState = selectThreadReadState(global, chatId, threadId);
+    if (!readState?.unreadPollVotes?.length) return;
+  }
+
+  actions.focusMessage({
+    chatId,
+    threadId,
+    messageId: readState.unreadPollVotes[0],
+    tabId,
+    scrollTargetPosition: 'end',
+  });
+});
+
 addActionHandler('readAllMentions', (global, actions, payload): ActionReturnType => {
   const { chatId, threadId = MAIN_THREAD_ID } = payload;
 
@@ -2418,6 +2482,21 @@ addActionHandler('readAllMentions', (global, actions, payload): ActionReturnType
   global = updateThreadReadState(global, chatId, threadId, {
     unreadMentionsCount: 0,
     unreadMentions: undefined,
+  });
+  return global;
+});
+
+addActionHandler('readAllPollVotes', (global, actions, payload): ActionReturnType => {
+  const { chatId, threadId = MAIN_THREAD_ID } = payload;
+
+  const chat = selectChat(global, chatId);
+  if (!chat) return undefined;
+
+  callApi('readAllPollVotes', { chat, threadId: threadId !== MAIN_THREAD_ID ? threadId : undefined });
+
+  global = updateThreadReadState(global, chatId, threadId, {
+    unreadPollVotesCount: 0,
+    unreadPollVotes: undefined,
   });
   return global;
 });
@@ -2801,13 +2880,16 @@ addActionHandler('forwardStory', (global, actions, payload): ActionReturnType =>
 
 addActionHandler('requestMessageTranslation', (global, actions, payload): ActionReturnType => {
   const {
-    chatId, id, toLanguageCode = selectTranslationLanguage(global), tabId = getCurrentTabId(),
+    chatId, id, toLanguageCode = selectTranslationLanguage(global), tone, tabId = getCurrentTabId(),
   } = payload;
 
-  global = updateRequestedMessageTranslation(global, chatId, id, toLanguageCode, tabId);
-  global = replaceSettings(global, {
-    translationLanguage: toLanguageCode,
-  });
+  global = updateRequestedMessageTranslation(global, chatId, id, toLanguageCode, tone, tabId);
+
+  if (!tone) {
+    global = replaceSettings(global, {
+      translationLanguage: toLanguageCode,
+    });
+  }
 
   return global;
 });
@@ -2824,13 +2906,13 @@ addActionHandler('showOriginalMessage', (global, actions, payload): ActionReturn
 
 addActionHandler('markMessagesTranslationPending', (global, actions, payload): ActionReturnType => {
   const {
-    chatId, messageIds, toLanguageCode = selectLanguageCode(global),
+    chatId, messageIds, toLanguageCode = selectLanguageCode(global), tone,
   } = payload;
 
   messageIds.forEach((id) => {
     global = updateMessageTranslation(global, chatId, id, toLanguageCode, {
       isPending: true,
-    });
+    }, tone);
   });
 
   return global;
@@ -2838,18 +2920,19 @@ addActionHandler('markMessagesTranslationPending', (global, actions, payload): A
 
 addActionHandler('translateMessages', (global, actions, payload): ActionReturnType => {
   const {
-    chatId, messageIds, toLanguageCode = selectLanguageCode(global),
+    chatId, messageIds, toLanguageCode = selectLanguageCode(global), tone,
   } = payload;
 
   const chat = selectChat(global, chatId);
   if (!chat) return undefined;
 
-  actions.markMessagesTranslationPending({ chatId, messageIds, toLanguageCode });
+  actions.markMessagesTranslationPending({ chatId, messageIds, toLanguageCode, tone });
 
   callApi('translateText', {
     chat,
     messageIds,
     toLanguageCode,
+    tone,
   });
 
   return global;
@@ -2860,6 +2943,11 @@ addActionHandler('summarizeMessage', async (global, actions, payload): Promise<v
   const chat = selectChat(global, chatId);
   if (!chat) return;
 
+  const { languageCode, tone } = toLanguageCode
+    ? parseTranslationCacheKey(toLanguageCode)
+    : { languageCode: undefined, tone: undefined };
+  const apiTone = tone === 'neutral' ? undefined : tone;
+
   const placeholderSummary: TextSummary = {
     isPending: true,
     text: undefined,
@@ -2868,10 +2956,9 @@ addActionHandler('summarizeMessage', async (global, actions, payload): Promise<v
   global = updateMessageSummary(global, chatId, id, placeholderSummary, toLanguageCode);
   setGlobal(global);
 
-  const result = await callApi('fetchMessageSummary', { chat, id, toLanguageCode });
+  const result = await callApi('fetchMessageSummary', { chat, id, toLanguageCode: languageCode, tone: apiTone });
   if (!result) {
     global = getGlobal();
-    // Disable summary to prevent endless loading
     global = updateChatMessage(global, chatId, id, { summaryLanguageCode: undefined });
     global = clearMessageSummary(global, chatId, id);
     setGlobal(global);

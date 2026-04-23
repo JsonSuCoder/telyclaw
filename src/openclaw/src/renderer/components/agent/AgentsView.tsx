@@ -18,7 +18,6 @@ interface AgentsViewProps {
   onToggleSidebar?: () => void;
   onNewChat?: () => void;
   onShowCowork?: () => void;
-  updateBadge?: React.ReactNode;
 }
 
 const AgentsView: React.FC<AgentsViewProps> = ({
@@ -26,7 +25,6 @@ const AgentsView: React.FC<AgentsViewProps> = ({
   onToggleSidebar,
   onNewChat,
   onShowCowork,
-  updateBadge,
 }) => {
   const isMac = api.platform === 'darwin';
   const agents = useSelector((state: RootState) => state.agent.agents);
@@ -87,7 +85,6 @@ const AgentsView: React.FC<AgentsViewProps> = ({
               >
                 <ComposeIcon className="h-4 w-4" />
               </button>
-              {updateBadge}
             </div>
           )}
           <h1 className="text-lg font-semibold text-foreground">

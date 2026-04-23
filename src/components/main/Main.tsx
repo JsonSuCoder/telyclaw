@@ -74,6 +74,7 @@ import ModalContainer from '../modals/ModalContainer';
 import PaymentModal from '../payment/PaymentModal.async';
 import ReceiptModal from '../payment/ReceiptModal.async';
 import RightColumn from '../right/RightColumn';
+import OpenClawColumn from '../right/OpenClawColumn';
 import StoryViewer from '../story/StoryViewer.async';
 import AttachBotRecipientPicker from './AttachBotRecipientPicker.async';
 import BotTrustModal from './BotTrustModal.async';
@@ -84,7 +85,6 @@ import DraftRecipientPicker from './DraftRecipientPicker.async';
 import FoldersSidebar from './FoldersSidebar';
 import ForwardRecipientPicker from './ForwardRecipientPicker.async';
 import GameModal from './GameModal';
-import OpenclawModal from './OpenclawModal';
 import HistoryCalendar from './HistoryCalendar.async';
 import NewContactModal from './NewContactModal.async';
 import PremiumLimitReachedModal from './premium/common/PremiumLimitReachedModal.async';
@@ -268,6 +268,7 @@ const Main = ({
     loadGiftAuction,
     loadPromoData,
     loadActiveGiftAuctions,
+    toggleOpenclawModal,
   } = getActions();
 
   if (DEBUG && !DEBUG_isLogged) {
@@ -569,67 +570,81 @@ const Main = ({
     closeCustomEmojiSets();
   });
 
+  const handleOpenclawClick = useLastCallback(() => {
+    toggleOpenclawModal();
+  });
+
   // Online status and browser tab indicators
   useBackgroundMode(handleBlur, handleFocus, IS_TAURI);
   useBeforeUnload(handleBlur);
   usePreventPinchZoomGesture(isMediaViewerOpen || isStoryViewerOpen);
 
   return (
-    <div ref={containerRef} id="Main" className={className}>
-      <FoldersSidebar isMobile={isMobile} isActive={isFoldersSidebarShown} />
-      <LeftColumn ref={leftColumnRef} isFoldersSidebarShown={isFoldersSidebarShown} />
-      <MiddleColumn leftColumnRef={leftColumnRef} isMobile={isMobile} />
-      <RightColumn isMobile={isMobile} />
-      <MediaViewer isOpen={isMediaViewerOpen} />
-      <StoryViewer isOpen={isStoryViewerOpen} />
-      <ForwardRecipientPicker isOpen={isForwardModalOpen} />
-      <DraftRecipientPicker requestedDraft={requestedDraft} />
-      <Dialogs />
-      <AudioPlayer noUi />
-      <ModalContainer />
-      <SafeLinkModal url={safeLinkModalUrl} />
-      <HistoryCalendar isOpen={isHistoryCalendarOpen} />
-      <StickerSetModal
-        isOpen={Boolean(openedStickerSetShortName)}
-        onClose={handleStickerSetModalClose}
-        stickerSetShortName={openedStickerSetShortName}
-      />
-      <CustomEmojiSetsModal
-        customEmojiSetIds={openedCustomEmojiSetIds}
-        onClose={handleCustomEmojiSetsModalClose}
-      />
-      {activeGroupCallId && <GroupCall groupCallId={activeGroupCallId} />}
-      <ActiveCallHeader isActive={Boolean(activeGroupCallId || isPhoneCallActive)} />
-      <NewContactModal
-        isOpen={Boolean(newContactUserId || newContactByPhoneNumber)}
-        userId={newContactUserId}
-        isByPhoneNumber={newContactByPhoneNumber}
-      />
-      <GameModal openedGame={openedGame} gameTitle={gameTitle} />
-      <OpenclawModal />
-      <DownloadManager />
-      <ConfettiContainer />
-      {IS_WAVE_TRANSFORM_SUPPORTED && <WaveContainer />}
-      <SnapEffectContainer />
-      <PhoneCall isActive={isPhoneCallActive} />
-      <UnreadCount isForAppBadge />
-      <RatePhoneCallModal isOpen={isRatePhoneCallModalOpen} />
-      <BotTrustModal
-        bot={botTrustRequestBot}
-        type={botTrustRequest?.type}
-        shouldRequestWriteAccess={botTrustRequest?.shouldRequestWriteAccess}
-      />
-      <AttachBotRecipientPicker requestedAttachBotInChat={requestedAttachBotInChat} />
-      <MessageListHistoryHandler />
-      <PremiumMainModal isOpen={isPremiumModalOpen} />
-      <GiveawayModal isOpen={isGiveawayModalOpen} />
-      <StarsGiftingPickerModal isOpen={isStarsGiftingPickerModal} />
-      <PremiumLimitReachedModal limit={limitReached} />
-      <PaymentModal isOpen={isPaymentModalOpen} onClose={closePaymentModal} />
-      <ReceiptModal isOpen={isReceiptModalOpen} onClose={clearReceipt} />
-      <DeleteFolderDialog folder={deleteFolderDialog} />
-      <ReactionPicker isOpen={isReactionPickerOpen} />
-      <DeleteMessageModal isOpen={isDeleteMessageModalOpen} />
+    <div id='MainWrapper'>
+      <div ref={containerRef} id="Main" className={className}>
+        <FoldersSidebar isMobile={isMobile} isActive={isFoldersSidebarShown} />
+        <LeftColumn ref={leftColumnRef} isFoldersSidebarShown={isFoldersSidebarShown} />
+        <MiddleColumn leftColumnRef={leftColumnRef} isMobile={isMobile} />
+        <RightColumn isMobile={isMobile} />
+        <button
+          type="button"
+          className="openclaw-trigger"
+          aria-label="Openclaw"
+          onClick={handleOpenclawClick}
+        >
+          Openclaw
+        </button>
+        <MediaViewer isOpen={isMediaViewerOpen} />
+        <StoryViewer isOpen={isStoryViewerOpen} />
+        <ForwardRecipientPicker isOpen={isForwardModalOpen} />
+        <DraftRecipientPicker requestedDraft={requestedDraft} />
+        <Dialogs />
+        <AudioPlayer noUi />
+        <ModalContainer />
+        <SafeLinkModal url={safeLinkModalUrl} />
+        <HistoryCalendar isOpen={isHistoryCalendarOpen} />
+        <StickerSetModal
+          isOpen={Boolean(openedStickerSetShortName)}
+          onClose={handleStickerSetModalClose}
+          stickerSetShortName={openedStickerSetShortName}
+        />
+        <CustomEmojiSetsModal
+          customEmojiSetIds={openedCustomEmojiSetIds}
+          onClose={handleCustomEmojiSetsModalClose}
+        />
+        {activeGroupCallId && <GroupCall groupCallId={activeGroupCallId} />}
+        <ActiveCallHeader isActive={Boolean(activeGroupCallId || isPhoneCallActive)} />
+        <NewContactModal
+          isOpen={Boolean(newContactUserId || newContactByPhoneNumber)}
+          userId={newContactUserId}
+          isByPhoneNumber={newContactByPhoneNumber}
+        />
+        <GameModal openedGame={openedGame} gameTitle={gameTitle} />
+        <DownloadManager />
+        <ConfettiContainer />
+        {IS_WAVE_TRANSFORM_SUPPORTED && <WaveContainer />}
+        <SnapEffectContainer />
+        <PhoneCall isActive={isPhoneCallActive} />
+        <UnreadCount isForAppBadge />
+        <RatePhoneCallModal isOpen={isRatePhoneCallModalOpen} />
+        <BotTrustModal
+          bot={botTrustRequestBot}
+          type={botTrustRequest?.type}
+          shouldRequestWriteAccess={botTrustRequest?.shouldRequestWriteAccess}
+        />
+        <AttachBotRecipientPicker requestedAttachBotInChat={requestedAttachBotInChat} />
+        <MessageListHistoryHandler />
+        <PremiumMainModal isOpen={isPremiumModalOpen} />
+        <GiveawayModal isOpen={isGiveawayModalOpen} />
+        <StarsGiftingPickerModal isOpen={isStarsGiftingPickerModal} />
+        <PremiumLimitReachedModal limit={limitReached} />
+        <PaymentModal isOpen={isPaymentModalOpen} onClose={closePaymentModal} />
+        <ReceiptModal isOpen={isReceiptModalOpen} onClose={clearReceipt} />
+        <DeleteFolderDialog folder={deleteFolderDialog} />
+        <ReactionPicker isOpen={isReactionPickerOpen} />
+        <DeleteMessageModal isOpen={isDeleteMessageModalOpen} />
+      </div>
+      <OpenClawColumn />
     </div>
   );
 };

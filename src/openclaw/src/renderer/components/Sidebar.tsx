@@ -35,7 +35,6 @@ interface SidebarProps {
   onNewChat: () => void;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
-  updateBadge?: React.ReactNode;
   hideLogin?: boolean;
 }
 
@@ -50,7 +49,6 @@ const Sidebar: React.FC<SidebarProps> = ({
   onNewChat,
   isCollapsed,
   onToggleCollapse,
-  updateBadge,
   hideLogin,
 }) => {
   const currentAgentId = useSelector((state: RootState) => state.agent.currentAgentId);
@@ -152,9 +150,6 @@ const Sidebar: React.FC<SidebarProps> = ({
     >
       <div className="pt-3 pb-3">
         <div className="draggable sidebar-header-drag h-8 flex items-center justify-between px-3">
-          <div className={`${isMac ? 'pl-[68px]' : ''}`}>
-            {updateBadge}
-          </div>
           <button
             type="button"
             onClick={onToggleCollapse}

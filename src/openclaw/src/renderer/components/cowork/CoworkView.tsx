@@ -1,7 +1,7 @@
 import { tauriApi as api } from '../../lib/tauri';
 import { ShieldCheckIcon } from '@heroicons/react/24/outline';
-import React, { useEffect, useRef,useState } from 'react';
-import { useDispatch,useSelector } from 'react-redux';
+import React, { useEffect, useRef, useState } from 'react';
+import { useDispatch, useSelector } from 'react-redux';
 
 import { coworkService } from '../../services/cowork';
 import { i18nService } from '../../services/i18n';
@@ -15,17 +15,18 @@ import {
   selectIsStreaming,
 } from '../../store/selectors/coworkSelectors';
 import { addMessage, clearCurrentSession, setCurrentSession, setStreaming, updateSessionStatus } from '../../store/slices/coworkSlice';
-import { clearSelection,selectAction, setActions } from '../../store/slices/quickActionSlice';
+import { clearSelection, selectAction, setActions } from '../../store/slices/quickActionSlice';
 import { clearActiveSkills, setActiveSkillIds } from '../../store/slices/skillSlice';
 import type { CoworkImageAttachment, CoworkSession, OpenClawEngineStatus } from '../../types/cowork';
 import ComposeIcon from '../icons/ComposeIcon';
 import SidebarToggleIcon from '../icons/SidebarToggleIcon';
-import { PromptPanel,QuickActionBar } from '../quick-actions';
+import { PromptPanel, QuickActionBar } from '../quick-actions';
 import type { SettingsOpenOptions } from '../Settings';
 import WindowTitleBar from '../window/WindowTitleBar';
 import { resolveAgentModelSelection } from './agentModelSelection';
 import CoworkPromptInput, { type CoworkPromptInputRef } from './CoworkPromptInput';
 import CoworkSessionDetail from './CoworkSessionDetail';
+import LogoIcon from '../../../../public/logo.png'
 
 export interface CoworkViewProps {
   onRequestAppSettings?: (options?: SettingsOpenOptions) => void;
@@ -174,7 +175,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
       unsubscribe();
       unsubscribeOpenClawStatus();
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dispatch]);
 
   const handleStartSession = async (prompt: string, skillPrompt?: string, imageAttachments?: CoworkImageAttachment[]): Promise<boolean | void> => {
@@ -517,7 +518,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
     <div className={`shrink-0 flex items-center justify-between px-4 py-2 text-xs ${isEngineError
       ? 'bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-300'
       : 'bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300'
-    }`}>
+      }`}>
       <div className="flex items-center gap-2">
         <span>{resolveEngineStatusText(openClawStatus)}</span>
         {typeof openClawStatus.progressPercent === 'number' && (
@@ -531,7 +532,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
         className={`shrink-0 rounded px-2 py-0.5 text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${isEngineError
           ? 'bg-red-600 text-white hover:bg-red-700 dark:bg-red-700 dark:hover:bg-red-600'
           : 'bg-amber-600 text-white hover:bg-amber-700 dark:bg-amber-700 dark:hover:bg-amber-600'
-        }`}
+          }`}
       >
         {i18nService.t('coworkOpenClawRestartGateway')}
       </button>
@@ -568,11 +569,11 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
       {homeHeader}
 
       {/* Main Content */}
-      <div className="flex-1 overflow-y-auto min-h-0">
-        <div className="max-w-3xl mx-auto px-4 py-16 space-y-12">
+      <div className="flex-1 overflow-y-hidden min-h-0 w-full">
+        <div className="max-w-3xl mx-auto px-4 py-16 space-y-12 h-full">
           {/* Welcome Section */}
           <div className="text-center space-y-5">
-            <img src="logo.png" alt="logo" className="w-16 h-16 mx-auto" />
+            <img src={LogoIcon} alt="logo" className="w-16 h-16 mx-auto" />
             <h2 className="text-3xl font-bold tracking-tight text-foreground">
               {i18nService.t('coworkWelcome')}
             </h2>
@@ -581,8 +582,20 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
             </p>
           </div>
 
+          {/* Quick Actions */}
+          <div className="space-y-4">
+            {selectedAction ? (
+              <PromptPanel
+                action={selectedAction}
+                onPromptSelect={handleQuickActionPromptSelect}
+              />
+            ) : (
+              <QuickActionBar actions={quickActions} onActionSelect={handleActionSelect} />
+            )}
+          </div>
+
           {/* Prompt Input Area - Large version with folder selector */}
-          <div className="space-y-3">
+          <div className="mt-auto">
             <div className="shadow-glow-accent rounded-2xl">
               <CoworkPromptInput
                 ref={promptInputRef}
@@ -601,18 +614,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
                 onManageSkills={() => onShowSkills?.()}
               />
             </div>
-          </div>
-
-          {/* Quick Actions */}
-          <div className="space-y-4">
-            {selectedAction ? (
-              <PromptPanel
-                action={selectedAction}
-                onPromptSelect={handleQuickActionPromptSelect}
-              />
-            ) : (
-              <QuickActionBar actions={quickActions} onActionSelect={handleActionSelect} />
-            )}
           </div>
         </div>
       </div>

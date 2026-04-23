@@ -7,7 +7,7 @@
   },
   "build": {
     "beforeDevCommand": null,
-    "devUrl": null,
+    "devUrl": "http://localhost:1234",
     "frontendDist": "../dist"
   },
   "plugins": {

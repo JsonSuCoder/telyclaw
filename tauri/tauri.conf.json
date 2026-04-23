@@ -6,10 +6,9 @@
     }
   },
   "build": {
-    "beforeDevCommand": "npm run dev",
-    "devUrl": "http://localhost:1234",
-    "frontendDist": "http://localhost:1234",
-    "removeUnusedCommands": true
+    "beforeDevCommand": null,
+    "devUrl": null,
+    "frontendDist": "../dist"
   },
   "plugins": {
     "deep-link": {
@@ -37,14 +36,17 @@
       "exceptionDomain": "",
       "frameworks": [],
       "providerShortName": null,
-      "signingIdentity": null
+      "signingIdentity": "Developer ID Application: LINX COMMUNICATION INC. (D6YD4RV25Q)",
+      "hardenedRuntime": true
     },
     "resources": {
-      "../src/openclaw/SKILLs": "SKILLs"
+      "../src/openclaw/SKILLs": "SKILLs",
+      "../dist": "dist"
     },
     "shortDescription": "",
     "targets": [
       "app",
+      "dmg",
       "nsis",
       "appimage"
     ],

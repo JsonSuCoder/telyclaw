@@ -1,6 +1,14 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/schema.json",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": null
+  },
   "bundle": {
+    "targets": [
+      "app",
+      "dmg"
+    ],
     "icon": [
       "icons/macos/32x32.png",
       "icons/macos/128x128.png",

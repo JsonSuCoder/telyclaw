@@ -1,7 +1,13 @@
 dist/
 node_modules
 .cache
+# Environment variables
 .env
+.env.*
+.env.local
+.env.development
+.env.production
+.env.signing
 src/lib/gramjs/build/
 build-contest/
 tests/

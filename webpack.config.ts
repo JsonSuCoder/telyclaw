@@ -1,6 +1,5 @@
 import 'webpack-dev-server';
-import 'dotenv/config';
-
+import dotenv from 'dotenv';
 import WatchFilePlugin from '@mytonwallet/webpack-watch-file-plugin';
 import StatoscopeWebpackPlugin from '@statoscope/webpack-plugin';
 import { statSync } from 'fs';
@@ -19,6 +18,11 @@ import {
 
 import { PRODUCTION_URL } from './src/config.ts';
 import { version as appVersion } from './package.json' with { type: 'json' };
+
+// Load environment-specific .env files
+const NODE_ENV = process.env.NODE_ENV || 'production';
+dotenv.config({ path: path.resolve(process.cwd(), `.env.${NODE_ENV}`) });
+dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 
 const {
   HEAD,

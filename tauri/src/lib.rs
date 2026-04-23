@@ -65,7 +65,7 @@ pub const DEFAULT_WINDOW_TITLE: &str = match std::option_env!("APP_TITLE") {
 
 pub const BASE_URL: &str = match std::option_env!("BASE_URL") {
   Some(url) => url,
-  None => "http://localhost:1234",
+  None => "tauri://localhost",
 };
 
 pub const WITH_UPDATER: &str = match std::option_env!("WITH_UPDATER") {

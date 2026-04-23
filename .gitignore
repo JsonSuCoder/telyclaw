@@ -20,4 +20,3 @@ dev/perf/screenshot*
 !.github/workflows/package-and-publish.yml
 /vendor/
 public/build-stats.json
-public/build-stats.json

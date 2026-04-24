@@ -570,10 +570,6 @@ const Main = ({
     closeCustomEmojiSets();
   });
 
-  const handleOpenclawClick = useLastCallback(() => {
-    toggleOpenclawModal();
-  });
-
   // Online status and browser tab indicators
   useBackgroundMode(handleBlur, handleFocus, IS_TAURI);
   useBeforeUnload(handleBlur);
@@ -586,14 +582,6 @@ const Main = ({
         <LeftColumn ref={leftColumnRef} isFoldersSidebarShown={isFoldersSidebarShown} />
         <MiddleColumn leftColumnRef={leftColumnRef} isMobile={isMobile} />
         <RightColumn isMobile={isMobile} />
-        <button
-          type="button"
-          className="openclaw-trigger"
-          aria-label="Openclaw"
-          onClick={handleOpenclawClick}
-        >
-          Openclaw
-        </button>
         <MediaViewer isOpen={isMediaViewerOpen} />
         <StoryViewer isOpen={isStoryViewerOpen} />
         <ForwardRecipientPicker isOpen={isForwardModalOpen} />

@@ -7,12 +7,16 @@ interface SkillsButtonProps {
   onSelectSkill: (skill: Skill) => void;
   onManageSkills: () => void;
   className?: string;
+  anchorClassName?: string;
+  popoverClassName?: string;
 }
 
 const SkillsButton: React.FC<SkillsButtonProps> = ({
   onSelectSkill,
   onManageSkills,
   className = '',
+  anchorClassName = '',
+  popoverClassName = '',
 }) => {
   const [isPopoverOpen, setIsPopoverOpen] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -26,7 +30,7 @@ const SkillsButton: React.FC<SkillsButtonProps> = ({
   };
 
   return (
-    <div className="relative">
+    <div className={`relative ${anchorClassName}`.trim()}>
       <button
         ref={buttonRef}
         type="button"
@@ -42,6 +46,7 @@ const SkillsButton: React.FC<SkillsButtonProps> = ({
         onSelectSkill={onSelectSkill}
         onManageSkills={onManageSkills}
         anchorRef={buttonRef}
+        className={popoverClassName}
       />
     </div>
   );

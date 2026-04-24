@@ -2,11 +2,11 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import OpenclawAppWrapper from './OpenclawAppWrapper';
 
-export function mountOpenclaw(container: HTMLElement) {
+export function mountOpenclaw(container: HTMLElement, props?: any) {
   const root = ReactDOM.createRoot(container);
   root.render(
     <React.StrictMode>
-      <OpenclawAppWrapper />
+      <OpenclawAppWrapper {...props} />
     </React.StrictMode>
   );
   return () => {

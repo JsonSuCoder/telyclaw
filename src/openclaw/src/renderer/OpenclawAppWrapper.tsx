@@ -4,10 +4,10 @@ import { store } from './store';
 import App from './App';
 import './index.css';
 
-const OpenclawAppWrapper: React.FC = () => {
+const OpenclawAppWrapper: React.FC = (props) => {
   return (
     <Provider store={store}>
-      <App />
+      <App {...props} />
     </Provider>
   );
 };

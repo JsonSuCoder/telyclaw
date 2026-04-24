@@ -570,7 +570,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
 
       {/* Main Content */}
       <div className="flex-1 overflow-y-hidden min-h-0 w-full">
-        <div className="max-w-3xl mx-auto px-4 py-16 space-y-12 h-full">
+        <div className="max-w-3xl mx-auto px-4 pt-16 pb-2 h-full flex flex-col">
           {/* Welcome Section */}
           <div className="text-center space-y-5">
             <img src={LogoIcon} alt="logo" className="w-16 h-16 mx-auto" />
@@ -595,25 +595,23 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
           </div>
 
           {/* Prompt Input Area - Large version with folder selector */}
-          <div className="mt-auto">
-            <div className="shadow-glow-accent rounded-2xl">
-              <CoworkPromptInput
-                ref={promptInputRef}
-                onSubmit={handleStartSession}
-                onStop={handleStopSession}
-                isStreaming={isStreaming}
-                disabled={!isEngineReady}
-                placeholder={i18nService.t('coworkPlaceholder')}
-                size="large"
-                workingDirectory={config.workingDirectory}
-                onWorkingDirectoryChange={async (dir: string) => {
-                  await coworkService.updateConfig({ workingDirectory: dir });
-                }}
-                showFolderSelector={true}
-                showModelSelector={true}
-                onManageSkills={() => onShowSkills?.()}
-              />
-            </div>
+          <div className="shadow-glow-accent rounded-2xl mt-auto">
+            <CoworkPromptInput
+              ref={promptInputRef}
+              onSubmit={handleStartSession}
+              onStop={handleStopSession}
+              isStreaming={isStreaming}
+              disabled={!isEngineReady}
+              placeholder={i18nService.t('coworkPlaceholder')}
+              size="large"
+              workingDirectory={config.workingDirectory}
+              onWorkingDirectoryChange={async (dir: string) => {
+                await coworkService.updateConfig({ workingDirectory: dir });
+              }}
+              showFolderSelector={true}
+              showModelSelector={true}
+              onManageSkills={() => onShowSkills?.()}
+            />
           </div>
         </div>
       </div>

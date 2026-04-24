@@ -98,6 +98,7 @@ import MiddleHeaderPanes from './MiddleHeaderPanes';
 import PremiumRequiredPlaceholder from './PremiumRequiredPlaceholder';
 import ReactorListModal from './ReactorListModal.async';
 import MiddleSearch from './search/MiddleSearch.async';
+import openclawLogo from '../../assets/openclaw-logo.png';
 
 import './MiddleColumn.scss';
 import backgroundStyles from '../../styles/_patternBackground.module.scss';
@@ -243,6 +244,7 @@ function MiddleColumn({
     setLeftColumnWidth,
     resetLeftColumnWidth,
     unblockUser,
+    toggleOpenclawModal,
   } = getActions();
 
   const { width: windowWidth } = useWindowSize();
@@ -430,6 +432,10 @@ function MiddleColumn({
 
   const handleUnblock = useLastCallback(() => {
     unblockUser({ userId: chatId! });
+  });
+
+  const handleOpenclawClick = useLastCallback(() => {
+    toggleOpenclawModal();
   });
 
   const customBackgroundValue = useCustomBackground(theme, customBackground);
@@ -640,18 +646,18 @@ function MiddleColumn({
                 {(
                   isMobile && (renderingCanSubscribe || (renderingShouldJoinToSend && !renderingShouldSendJoinRequest))
                 ) && (
-                  <div className="middle-column-footer-button-container" dir={lang.isRtl ? 'rtl' : undefined}>
-                    <Button
-                      size="tiny"
-                      fluid
-                      ripple
-                      className="composer-button join-subscribe-button"
-                      onClick={handleSubscribeClick}
-                    >
-                      {oldLang(renderingIsChannel ? 'ProfileJoinChannel' : 'ProfileJoinGroup')}
-                    </Button>
-                  </div>
-                )}
+                    <div className="middle-column-footer-button-container" dir={lang.isRtl ? 'rtl' : undefined}>
+                      <Button
+                        size="tiny"
+                        fluid
+                        ripple
+                        className="composer-button join-subscribe-button"
+                        onClick={handleSubscribeClick}
+                      >
+                        {oldLang(renderingIsChannel ? 'ProfileJoinChannel' : 'ProfileJoinGroup')}
+                      </Button>
+                    </div>
+                  )}
                 {isMobile && renderingShouldSendJoinRequest && (
                   <div className="middle-column-footer-button-container" dir={lang.isRtl ? 'rtl' : undefined}>
                     <Button
@@ -737,6 +743,14 @@ function MiddleColumn({
           />
         ))}
       </div>
+      <button
+        type="button"
+        className="openclaw-trigger"
+        aria-label="Openclaw"
+        onClick={handleOpenclawClick}
+      >
+        <img src={openclawLogo} style={{ width: '64px', height: '64px' }} alt="Openclaw" />
+      </button>
     </div>
   );
 }

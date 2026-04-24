@@ -798,7 +798,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             />
             <div className="flex items-center justify-between px-4 pb-2 pt-1.5">
               <div className="flex items-center gap-2 relative">
-                {showFolderSelector && (
+                {/* {showFolderSelector && (
                   <>
                       <div className="flex items-center">
                         <button
@@ -842,7 +842,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                       </div>
                     )}
                   </>
-                )}
+                )} */}
                 {showModelSelector && !remoteManaged && (
                   <div className="flex flex-col items-start gap-1">
                     <ModelSelector
@@ -879,6 +879,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                     <SkillsButton
                       onSelectSkill={handleSelectSkill}
                       onManageSkills={handleManageSkills}
+                      anchorClassName="static"
+                      popoverClassName="left-0 bottom-[calc(100%+0.5rem)]"
                     />
                     <ActiveSkillBadge />
                   </>

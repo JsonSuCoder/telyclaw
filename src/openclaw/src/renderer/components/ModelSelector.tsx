@@ -124,7 +124,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
         onClick={() => setIsOpen(!isOpen)}
         className={`flex items-center space-x-2 px-3 py-1.5 rounded-xl hover:bg-surface-raised text-foreground transition-colors cursor-pointer ${isOpen ? 'bg-surface-raised' : ''}`}
       >
-        <span className="font-medium text-sm">{selectedModel?.name ?? defaultLabel ?? ''}</span>
+        <span className="font-medium text-sm w-full overflow-hidden text-ellipsis whitespace-nowrap">{selectedModel?.name ?? defaultLabel ?? ''}</span>
         <ChevronDownIcon className="h-4 w-4 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
       </button>
 

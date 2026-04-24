@@ -10,7 +10,12 @@ import Settings, { type SettingsOpenOptions } from './components/Settings';
 import Sidebar from './components/Sidebar';
 import Toast from './components/Toast';
 import WindowTitleBar from './components/window/WindowTitleBar';
-import { CoworkView } from './components/cowork';
+import {
+  CoworkView,
+  CoworkSessionsPopover,
+  HeaderMenuPopover,
+  HeaderViewModal,
+} from './components/cowork';
 import { SkillsView } from './components/skills';
 import { ScheduledTasksView } from './components/scheduledTasks';
 import { McpView } from './components/mcp';
@@ -34,13 +39,18 @@ import { ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline';
 import { i18nService } from './services/i18n';
 import { matchesShortcut } from './services/shortcuts';
 import PrivacyDialog from './components/PrivacyDialog';
-import ClockIcon from './components/icons/ClockIcon';
-import Cog6ToothIcon from './components/icons/Cog6ToothIcon';
-import XMarkIcon from './components/icons/XMarkIcon';
 import ComposeIcon from './components/icons/ComposeIcon';
+import XMarkIcon from './components/icons/XMarkIcon';
 
-const App: React.FC = () => {
+interface AppProps {
+  onClose: () => void;
+}
+const App: React.FC<AppProps> = ({ onClose }) => {
   const [showSettings, setShowSettings] = useState(false);
+  const [showScheduledTasksModal, setShowScheduledTasksModal] = useState(false);
+  const [showSkillsModal, setShowSkillsModal] = useState(false);
+  const [showMcpModal, setShowMcpModal] = useState(false);
+  const [showAgentsModal, setShowAgentsModal] = useState(false);
   const [settingsOptions, setSettingsOptions] = useState<SettingsOpenOptions>({});
   const [mainView, setMainView] = useState<'cowork' | 'skills' | 'scheduledTasks' | 'mcp' | 'agents'>('cowork');
   const [isInitialized, setIsInitialized] = useState(false);
@@ -262,23 +272,40 @@ const App: React.FC = () => {
   }, []);
 
   const handleShowSkills = useCallback(() => {
-    setMainView('skills');
+    setShowScheduledTasksModal(false);
+    setShowSkillsModal(true);
+    setShowMcpModal(false);
+    setShowAgentsModal(false);
+    setMainView('cowork');
   }, []);
 
   const handleShowCowork = useCallback(() => {
+    setShowScheduledTasksModal(false);
+    setShowSkillsModal(false);
+    setShowMcpModal(false);
+    setShowAgentsModal(false);
     setMainView('cowork');
   }, []);
 
   const handleShowScheduledTasks = useCallback(() => {
-    setMainView('scheduledTasks');
+    setShowScheduledTasksModal(true);
+    setShowSkillsModal(false);
+    setShowMcpModal(false);
+    setShowAgentsModal(false);
   }, []);
 
   const handleShowMcp = useCallback(() => {
-    setMainView('mcp');
+    setShowScheduledTasksModal(false);
+    setShowSkillsModal(false);
+    setShowMcpModal(true);
+    setShowAgentsModal(false);
   }, []);
 
   const handleShowAgents = useCallback(() => {
-    setMainView('agents');
+    setShowScheduledTasksModal(false);
+    setShowSkillsModal(false);
+    setShowMcpModal(false);
+    setShowAgentsModal(true);
   }, []);
 
   const handleToggleSidebar = useCallback(() => {
@@ -289,6 +316,10 @@ const App: React.FC = () => {
     const shouldClearInput = mainView === 'cowork' || !!currentSessionId;
     coworkService.clearSession();
     dispatch(clearSelection());
+    setShowScheduledTasksModal(false);
+    setShowSkillsModal(false);
+    setShowMcpModal(false);
+    setShowAgentsModal(false);
     setMainView('cowork');
     window.setTimeout(() => {
       window.dispatchEvent(new CustomEvent('cowork:focus-input', {
@@ -296,6 +327,23 @@ const App: React.FC = () => {
       }));
     }, 0);
   }, [dispatch, mainView, currentSessionId]);
+
+  const handleSelectSession = useCallback((sessionId: string) => {
+    void coworkService.loadSession(sessionId);
+    setMainView('cowork');
+  }, []);
+
+  const handleDeleteSession = useCallback(async (sessionId: string) => {
+    await coworkService.deleteSession(sessionId);
+  }, []);
+
+  const handleTogglePin = useCallback(async (sessionId: string, pinned: boolean) => {
+    await coworkService.setSessionPinned(sessionId, pinned);
+  }, []);
+
+  const handleRenameSession = useCallback(async (sessionId: string, title: string) => {
+    await coworkService.renameSession(sessionId, title);
+  }, []);
 
   const handleCreateSkillByChat = useCallback(() => {
     dispatch(setDraftPrompt({ sessionId: '__home__', draft: i18nService.t('skillCreatorPrompt') }));
@@ -534,13 +582,25 @@ const App: React.FC = () => {
             <button className="p-1 text-secondary hover:text-foreground rounded-md hover:bg-surface-raised" onClick={handleNewChat}>
               <ComposeIcon className="h-5 w-5" />
             </button>
-            <button className="p-1 text-secondary hover:text-foreground rounded-md hover:bg-surface-raised">
-              <ClockIcon className="h-5 w-5" />
-            </button>
-            <button className="p-1 text-secondary hover:text-foreground rounded-md hover:bg-surface-raised" onClick={()=>handleShowSettings()}>
-              <Cog6ToothIcon className="h-5 w-5" />
-            </button>
-            <button className="p-1 text-secondary hover:text-foreground rounded-md hover:bg-surface-raised">
+            <CoworkSessionsPopover
+              onSelectSession={handleSelectSession}
+              onDeleteSession={handleDeleteSession}
+              onTogglePin={handleTogglePin}
+              onRenameSession={handleRenameSession}
+            />
+            <HeaderMenuPopover
+              activeView={mainView}
+              onShowScheduledTasks={handleShowScheduledTasks}
+              onShowSkills={handleShowSkills}
+              onShowMcp={handleShowMcp}
+              onShowAgents={handleShowAgents}
+              onShowSettings={() => handleShowSettings()}
+            />
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-1 text-secondary hover:text-foreground rounded-md hover:bg-surface-raised"
+            >
               <XMarkIcon className="h-5 w-5" />
             </button>
           </div>
@@ -563,34 +623,7 @@ const App: React.FC = () => {
           <div className={`flex-1 min-w-0 py-1.5 pr-1.5 ${isSidebarCollapsed ? 'pl-1.5' : ''}`}>
             <div className="relative h-full min-h-0 rounded-xl bg-background overflow-hidden">
               <EngineStartupOverlay />
-              {mainView === 'skills' ? (
-                <SkillsView
-                  isSidebarCollapsed={isSidebarCollapsed}
-                  onToggleSidebar={handleToggleSidebar}
-                  onNewChat={handleNewChat}
-                  onCreateSkillByChat={handleCreateSkillByChat}
-                  readOnly={enterpriseConfig?.ui?.skills === 'readonly'}
-                />
-              ) : mainView === 'scheduledTasks' ? (
-                <ScheduledTasksView
-                  isSidebarCollapsed={isSidebarCollapsed}
-                  onToggleSidebar={handleToggleSidebar}
-                  onNewChat={handleNewChat}
-                />
-              ) : mainView === 'mcp' ? (
-                <McpView
-                  isSidebarCollapsed={isSidebarCollapsed}
-                  onToggleSidebar={handleToggleSidebar}
-                  onNewChat={handleNewChat}
-                />
-              ) : mainView === 'agents' ? (
-                <AgentsView
-                  isSidebarCollapsed={isSidebarCollapsed}
-                  onToggleSidebar={handleToggleSidebar}
-                  onNewChat={handleNewChat}
-                  onShowCowork={handleShowCowork}
-                />
-              ) : (
+              {mainView === 'skills' ? null : (
                 <CoworkView
                   onRequestAppSettings={handleShowSettings}
                   onShowSkills={handleShowSkills}
@@ -604,6 +637,45 @@ const App: React.FC = () => {
         </div>
       </div>
 
+      {showScheduledTasksModal && (
+        <HeaderViewModal isOpen={showScheduledTasksModal} onClose={() => setShowScheduledTasksModal(false)}>
+          <ScheduledTasksView
+            isSidebarCollapsed={isSidebarCollapsed}
+            onToggleSidebar={handleToggleSidebar}
+            onNewChat={handleNewChat}
+          />
+        </HeaderViewModal>
+      )}
+      {showSkillsModal && (
+        <HeaderViewModal isOpen={showSkillsModal} onClose={() => setShowSkillsModal(false)}>
+          <SkillsView
+            isSidebarCollapsed={isSidebarCollapsed}
+            onToggleSidebar={handleToggleSidebar}
+            onNewChat={handleNewChat}
+            onCreateSkillByChat={handleCreateSkillByChat}
+            readOnly={enterpriseConfig?.ui?.skills === 'readonly'}
+          />
+        </HeaderViewModal>
+      )}
+      {showMcpModal && (
+        <HeaderViewModal isOpen={showMcpModal} onClose={() => setShowMcpModal(false)}>
+          <McpView
+            isSidebarCollapsed={isSidebarCollapsed}
+            onToggleSidebar={handleToggleSidebar}
+            onNewChat={handleNewChat}
+          />
+        </HeaderViewModal>
+      )}
+      {showAgentsModal && (
+        <HeaderViewModal isOpen={showAgentsModal} onClose={() => setShowAgentsModal(false)}>
+          <AgentsView
+            isSidebarCollapsed={isSidebarCollapsed}
+            onToggleSidebar={handleToggleSidebar}
+            onNewChat={handleNewChat}
+            onShowCowork={handleShowCowork}
+          />
+        </HeaderViewModal>
+      )}
       {/* 设置窗口显示在所有主内容之上，但不影响主界面的交互 */}
       {showSettings && (
         <Settings

@@ -1,4 +1,4 @@
-import { withGlobal } from '../../global';
+import { getActions, withGlobal } from '../../global';
 import { selectTabState } from '../../global/selectors';
 import { useVtn } from '../../hooks/animations/useVtn';
 import { memo, useEffect, useRef } from '../../lib/teact/teact';
@@ -21,17 +21,18 @@ const OpenClawColumn = ({
 }: OwnProps & StateProps) => {
   const { createVtnStyle } = useVtn();
   const containerRef = useRef<HTMLDivElement>();
+  const { closeOpenclawModal } = getActions();
 
   useEffect(() => {
     if (!containerRef.current) {
       return undefined;
     }
 
-    return mountOpenclaw(containerRef.current);
+    return mountOpenclaw(containerRef.current, { onClose: closeOpenclawModal });
   }, []);
 
   return (
-    <div id="OpenClawColumn">
+    <div id="OpenClawColumn" className={!isOpenclawModalOpen ? 'is-hidden' : undefined}>
       <div ref={containerRef} className="openclaw-root-container" />
     </div>
   );

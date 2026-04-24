@@ -15,6 +15,7 @@ interface SkillsPopoverProps {
   onSelectSkill: (skill: Skill) => void;
   onManageSkills: () => void;
   anchorRef: React.RefObject<HTMLElement>;
+  className?: string;
 }
 
 const SkillsPopover: React.FC<SkillsPopoverProps> = ({
@@ -23,6 +24,7 @@ const SkillsPopover: React.FC<SkillsPopoverProps> = ({
   onSelectSkill,
   onManageSkills,
   anchorRef,
+  className = '',
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [maxListHeight, setMaxListHeight] = useState(256); // default max-h-64 = 256px
@@ -106,7 +108,7 @@ const SkillsPopover: React.FC<SkillsPopoverProps> = ({
   return (
     <div
       ref={popoverRef}
-      className="absolute bottom-full left-0 mb-2 w-72 rounded-xl border border-border bg-surface shadow-xl z-50"
+      className={`absolute bottom-full left-0 mb-2 w-72 rounded-xl border border-border bg-surface shadow-xl z-50 ${className}`.trim()}
     >
       {/* Search input */}
       <div className="p-3 border-b border-border">

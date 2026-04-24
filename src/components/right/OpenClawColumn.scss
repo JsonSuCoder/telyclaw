@@ -30,4 +30,8 @@
       --left-column-max-width: calc(33vw - var(--folders-sidebar-width));
     }
   }
+
+  &.is-hidden {
+    display: none;
+  }
 }

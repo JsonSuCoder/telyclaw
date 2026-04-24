@@ -2,7 +2,7 @@ import { getActions } from '../../global';
 
 import { DEBUG } from '../../config';
 import { MouseButton } from '../browser/windowEnvironment';
-import setupTelegramDataBridge from './telegramDataBridge';
+import setupTelegramTools from './telegramTools';
 
 type DownloadFinishedEvent = {
   success: boolean;
@@ -14,8 +14,7 @@ export default function setupTauriListeners() {
   if (isSetup) return;
   isSetup = true;
 
-  // Initialize Telegram Data Bridge for OpenClaw MCP
-  setupTelegramDataBridge();
+  setupTelegramTools();
 
   // Disable default tauri context menu in production build
   if (!DEBUG) {

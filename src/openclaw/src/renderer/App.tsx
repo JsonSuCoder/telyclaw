@@ -37,7 +37,6 @@ import type { CoworkPermissionResult } from './types/cowork';
 import { ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline';
 import { i18nService } from './services/i18n';
 import { matchesShortcut } from './services/shortcuts';
-import PrivacyDialog from './components/PrivacyDialog';
 import ComposeIcon from './components/icons/ComposeIcon';
 import XMarkIcon from './components/icons/XMarkIcon';
 import OpenClawIcon from '../../../assets/openclaw-logo.png'
@@ -58,7 +57,6 @@ const App: React.FC<AppProps> = ({ onClose }) => {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [, forceLanguageRefresh] = useState(0);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-  const [privacyAgreed, setPrivacyAgreed] = useState<boolean | null>(null);
   const [enterpriseConfig, setEnterpriseConfig] = useState<{
     ui?: Record<string, 'hide' | 'disable' | 'readonly'>;
     disableUpdate?: boolean;
@@ -169,10 +167,6 @@ const App: React.FC<AppProps> = ({ onClose }) => {
           ) ?? allModels[0];
           dispatch(setSelectedModel(preferredModel));
         }
-
-        // 检查隐私协议是否已同意（必须在 setIsInitialized 之前）
-        const agreed = await api.store.get('privacy_agreed');
-        setPrivacyAgreed(agreed === true);
 
         setIsInitialized(true);
         console.info('[App] initializeApp: shell ready');
@@ -357,19 +351,6 @@ const App: React.FC<AppProps> = ({ onClose }) => {
     }, 2200);
   }, []);
 
-  const handleShowLogin = useCallback(() => {
-    showToast(i18nService.t('featureInDevelopment'));
-  }, [showToast]);
-
-  const handlePrivacyAccept = useCallback(async () => {
-    await api.store.set('privacy_agreed', true);
-    setPrivacyAgreed(true);
-  }, []);
-
-  const handlePrivacyReject = useCallback(() => {
-    // 立刻隐藏窗口，让用户感觉立即关闭
-    api.window.close();
-  }, []);
 
   const handlePermissionResponse = useCallback(async (result: CoworkPermissionResult) => {
     if (!pendingPermission) return;
@@ -672,12 +653,6 @@ const App: React.FC<AppProps> = ({ onClose }) => {
         />
       )}
       {permissionModal}
-      {privacyAgreed === false && (
-        <PrivacyDialog
-          onAccept={handlePrivacyAccept}
-          onReject={handlePrivacyReject}
-        />
-      )}
     </div>
   );
 };

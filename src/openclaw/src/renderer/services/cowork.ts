@@ -165,7 +165,7 @@ class CoworkService {
     });
     this.streamListenerCleanups.push(errorCleanup);
 
-    // NOTE: telegram-query listener is handled by telegramDataBridge.ts
+    // NOTE: telegram-query listener is handled by telegramTools.ts
     // Do not add duplicate listener here
 
     // Sessions changed listener (new channel sessions discovered by polling)

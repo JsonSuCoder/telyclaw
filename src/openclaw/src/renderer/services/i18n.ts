@@ -1281,11 +1281,6 @@ const translations: Record<LanguageType, Record<string, string>> = {
     scheduledTasksDataAnomalyWarning: '定时任务「{name}」存在异常数据，已自动修正显示，建议重新编辑该任务',
 
     // 隐私协议弹窗
-    privacyDialogTitle: '网易有道LobsterAI服务协议',
-    privacyDialogDesc: '在使用网易有道LobsterAI之前，请您仔细阅读{link}内容，并进行确认。',
-    privacyDialogLinkText: '网易有道LobsterAI服务协议',
-    privacyDialogAccept: '我已阅读并同意',
-    privacyDialogReject: '拒绝',
     githubCopilotAuth: 'GitHub 账号认证',
     githubCopilotSignIn: '使用 GitHub 登录',
     githubCopilotSignOut: '退出登录',

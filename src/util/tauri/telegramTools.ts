@@ -1,14 +1,14 @@
 /**
- * Telegram Data Bridge for OpenClaw MCP
+ * Telegram Tools for OpenClaw
  *
- * This module bridges Telegram data from the React frontend to the Tauri backend,
+ * Exposes Telegram methods and tools to the Tauri backend,
  * allowing OpenClaw AI agents to query Telegram chats, messages, and users.
  *
  * Architecture:
  * OpenClaw Agent → Tauri Backend → emit event → Frontend (this) → execute selectors → emit response
  */
 
-import { getGlobal } from '../../global';
+import { getActions, getGlobal } from '../../global';
 import {
   selectChat,
   selectChatFullInfo,
@@ -17,6 +17,8 @@ import {
   selectUser,
   selectUserFullInfo,
 } from '../../global/selectors/users';
+import { selectThreadReadState } from '../../global/selectors/threads';
+import { MAIN_THREAD_ID } from '../../api/types/messages';
 
 // Query handlers
 const queryHandlers: Record<string, (params: Record<string, unknown>) => unknown> = {
@@ -50,7 +52,7 @@ const queryHandlers: Record<string, (params: Record<string, unknown>) => unknown
   'search_user': (params) => {
     const global = getGlobal();
     const query = String(params.query || '').toLowerCase();
-    const limit = Number(params.limit) || 20;
+    const limit = Math.min(Number(params.limit) || 10, 20);
 
     if (!query) return [];
 
@@ -95,34 +97,31 @@ const queryHandlers: Record<string, (params: Record<string, unknown>) => unknown
     return fullInfo ? sanitizeChatFullInfo(fullInfo) : null;
   },
 
-  // List all chats (alias: getChats)
+  // List all chats (alias: getChats) — compact, no page limit
   'getChats': (params) => {
-    const global = getGlobal();
-    const limit = Number(params.limit) || 50;
-    const offset = Number(params.offset) || 0;
-
-    const chatIds = global.chats.listIds?.active || [];
-    const slicedIds = chatIds.slice(offset, offset + limit);
-
-    return slicedIds.map(chatId => {
-      const chat = global.chats.byId[chatId];
-      return chat ? sanitizeChat(chat) : null;
-    }).filter(Boolean);
+    return queryHandlers.listChats(params);
   },
 
-  // List all chats
+  // List all chats — compact, returns all chats from Redux store
   'listChats': (params) => {
     const global = getGlobal();
-    const limit = Number(params.limit) || 50;
+    const chatIds = global.chats.listIds?.active || [];
+    const limit = Number(params.limit) || 0; // 0 = all
     const offset = Number(params.offset) || 0;
 
-    // Get chat IDs from the ordered list
-    const chatIds = global.chats.listIds?.active || [];
-    const slicedIds = chatIds.slice(offset, offset + limit);
+    const ids = limit > 0 ? chatIds.slice(offset, offset + limit) : chatIds.slice(offset);
 
-    return slicedIds.map(chatId => {
+    return ids.map((chatId) => {
       const chat = global.chats.byId[chatId];
-      return chat ? sanitizeChat(chat) : null;
+      if (!chat) return null;
+      const readState = selectThreadReadState(global, chatId, MAIN_THREAD_ID);
+      return {
+        id: chat.id,
+        title: chat.title,
+        type: chat.type,
+        username: chat.usernames?.[0]?.username,
+        unreadCount: readState?.unreadCount || 0,
+      };
     }).filter(Boolean);
   },
 
@@ -148,7 +147,7 @@ const queryHandlers: Record<string, (params: Record<string, unknown>) => unknown
   'getMessages': (params) => {
     const global = getGlobal();
     const chatId = String(params.chatId || '');
-    const limit = Number(params.limit) || 50;
+    const limit = Math.min(Number(params.limit) || 20, 50);
     const offsetId = params.offsetId ? Number(params.offsetId) : undefined;
 
     if (!chatId) return [];
@@ -189,12 +188,11 @@ const queryHandlers: Record<string, (params: Record<string, unknown>) => unknown
     const global = getGlobal();
     const chatId = params.chatId ? String(params.chatId) : undefined;
     const query = String(params.query || '').toLowerCase();
-    const limit = Number(params.limit) || 20;
+    const limit = Math.min(Number(params.limit) || 10, 20);
 
     if (!query) return [];
 
     const results: unknown[] = [];
-
     const chatIds = chatId ? [chatId] : Object.keys(global.messages.byChatId);
 
     for (const cid of chatIds) {
@@ -223,7 +221,8 @@ const queryHandlers: Record<string, (params: Record<string, unknown>) => unknown
     const byChat: Record<string, number> = {};
 
     for (const [chatId, chat] of Object.entries(chats)) {
-      const unread = (chat as any).unreadCount || 0;
+      const readState = selectThreadReadState(global, chatId, MAIN_THREAD_ID);
+      const unread = readState?.unreadCount || 0;
       if (unread > 0) {
         byChat[chatId] = unread;
         totalUnread += unread;
@@ -250,7 +249,7 @@ const queryHandlers: Record<string, (params: Record<string, unknown>) => unknown
   'searchUsers': (params) => {
     const global = getGlobal();
     const query = String(params.query || '').toLowerCase();
-    const limit = Number(params.limit) || 20;
+    const limit = Math.min(Number(params.limit) || 10, 20);
 
     if (!query) return [];
 
@@ -268,6 +267,30 @@ const queryHandlers: Record<string, (params: Record<string, unknown>) => unknown
       }
     }
     return results;
+  },
+
+  // Send a text message to a chat
+  'sendMessage': (params) => {
+    const chatId = String(params.chatId || params.chat_id || '');
+    const text = String(params.text || '');
+
+    if (!chatId) return { success: false, error: 'chatId is required' };
+    if (!text) return { success: false, error: 'text is required' };
+
+    const global = getGlobal();
+    const chat = selectChat(global, chatId);
+    if (!chat) return { success: false, error: `Chat not found: ${chatId}` };
+
+    getActions().sendMessage({
+      messageList: {
+        chatId,
+        threadId: MAIN_THREAD_ID,
+        type: 'thread',
+      },
+      text,
+    });
+
+    return { success: true, data: { chatId, text } };
   },
 
   // Execute a tool call (for Claude AI)
@@ -300,6 +323,10 @@ const queryHandlers: Record<string, (params: Record<string, unknown>) => unknown
       'telegram_get_chat': {
         handler: 'getChat',
         mapParams: (i) => ({ chatId: i.chat_id }),
+      },
+      'telegram_send_message': {
+        handler: 'sendMessage',
+        mapParams: (i) => ({ chatId: i.chat_id, text: i.text }),
       },
     };
 
@@ -376,11 +403,11 @@ const queryHandlers: Record<string, (params: Record<string, unknown>) => unknown
       },
       {
         name: 'telegram_list_chats',
-        description: 'List Telegram chats/conversations.',
+        description: 'List all Telegram chats/conversations. Returns compact data (id, title, type, username, unreadCount) for every chat. Omit limit to get all chats.',
         input_schema: {
           type: 'object',
           properties: {
-            limit: { type: 'number', description: 'Max chats (default 50)' },
+            limit: { type: 'number', description: 'Max chats to return (0 or omit = all)' },
             offset: { type: 'number', description: 'Skip first N chats' },
           },
         },
@@ -394,6 +421,18 @@ const queryHandlers: Record<string, (params: Record<string, unknown>) => unknown
             chat_id: { type: 'string', description: 'The chat ID' },
           },
           required: ['chat_id'],
+        },
+      },
+      {
+        name: 'telegram_send_message',
+        description: 'Send a text message to a Telegram chat. Use this when the user asks to send a message to someone.',
+        input_schema: {
+          type: 'object',
+          properties: {
+            chat_id: { type: 'string', description: 'The chat ID to send the message to' },
+            text: { type: 'string', description: 'The message text to send' },
+          },
+          required: ['chat_id', 'text'],
         },
       },
     ];
@@ -423,19 +462,24 @@ function sanitizeUserFullInfo(info: any): Record<string, unknown> {
   };
 }
 
-function sanitizeChat(chat: any): Record<string, unknown> {
-  return {
+function sanitizeChat(chat: any, includeLastMessage = false): Record<string, unknown> {
+  const global = getGlobal();
+  const readState = selectThreadReadState(global, chat.id, MAIN_THREAD_ID);
+  const result: Record<string, unknown> = {
     id: chat.id,
     title: chat.title,
     type: chat.type,
     username: chat.usernames?.[0]?.username,
     membersCount: chat.membersCount,
-    unreadCount: chat.unreadCount,
+    unreadCount: readState?.unreadCount || 0,
     isMuted: chat.isMuted,
     isVerified: chat.isVerified,
     isCreator: chat.isCreator,
-    lastMessage: chat.lastMessage ? sanitizeMessage(chat.lastMessage) : undefined,
   };
+  if (includeLastMessage && chat.lastMessage) {
+    result.lastMessage = sanitizeMessage(chat.lastMessage);
+  }
+  return result;
 }
 
 function sanitizeChatFullInfo(info: any): Record<string, unknown> {
@@ -447,13 +491,19 @@ function sanitizeChatFullInfo(info: any): Record<string, unknown> {
   };
 }
 
+const MAX_MESSAGE_TEXT_LENGTH = 500;
+
 function sanitizeMessage(msg: any): Record<string, unknown> {
+  let text = msg.content?.text?.text;
+  if (typeof text === 'string' && text.length > MAX_MESSAGE_TEXT_LENGTH) {
+    text = text.slice(0, MAX_MESSAGE_TEXT_LENGTH) + '…';
+  }
   return {
     id: msg.id,
     chatId: msg.chatId,
     senderId: msg.senderId,
     date: msg.date,
-    text: msg.content?.text?.text,
+    text,
     isOutgoing: msg.isOutgoing,
     isForwarded: !!msg.forwardInfo,
     replyToMessageId: msg.replyInfo?.replyToMsgId,
@@ -471,7 +521,7 @@ type TelegramQueryEvent = {
   params: Record<string, unknown>;
 };
 
-export default async function setupTelegramDataBridge() {
+export default async function setupTelegramTools() {
   if (isSetup) return;
   isSetup = true;
 
@@ -514,15 +564,15 @@ export default async function setupTelegramDataBridge() {
         });
       } catch (err) {
         // eslint-disable-next-line no-console
-        console.error('[TelegramDataBridge] Failed to send response:', err);
+        console.error('[TelegramTools] Failed to send response:', err);
       }
     });
 
     // eslint-disable-next-line no-console
-    console.log('[TelegramDataBridge] Initialized successfully');
+    console.log('[TelegramTools] Initialized successfully');
   } catch (error) {
     // eslint-disable-next-line no-console
-    console.error('[TelegramDataBridge] Failed to initialize:', error);
+    console.error('[TelegramTools] Failed to initialize:', error);
   }
 }
 

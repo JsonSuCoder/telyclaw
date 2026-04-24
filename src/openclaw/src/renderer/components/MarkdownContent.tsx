@@ -689,7 +689,7 @@ const MarkdownContent: React.FC<MarkdownContentProps> = ({
   );
   const normalizedContent = useMemo(() => normalizeDisplayMath(encodeFileUrlsInMarkdown(content)), [content]);
   return (
-    <div className={`markdown-content text-[15px] leading-6 ${className}`}>
+    <div className={`markdown-content text-[15px] leading-6 overflow-hidden break-all ${className}`}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[rehypeKatex]}

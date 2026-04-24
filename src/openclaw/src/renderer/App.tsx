@@ -3,7 +3,6 @@ import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react'
 import { useSelector, useDispatch } from 'react-redux';
 import { RootState, store } from './store';
 import {
-  selectCurrentSessionId,
   selectFirstPendingPermission,
 } from './store/selectors/coworkSelectors';
 import Settings, { type SettingsOpenOptions } from './components/Settings';
@@ -41,6 +40,7 @@ import { matchesShortcut } from './services/shortcuts';
 import PrivacyDialog from './components/PrivacyDialog';
 import ComposeIcon from './components/icons/ComposeIcon';
 import XMarkIcon from './components/icons/XMarkIcon';
+import OpenClawIcon from '../../../assets/openclaw-logo.png'
 
 interface AppProps {
   onClose: () => void;
@@ -52,7 +52,7 @@ const App: React.FC<AppProps> = ({ onClose }) => {
   const [showMcpModal, setShowMcpModal] = useState(false);
   const [showAgentsModal, setShowAgentsModal] = useState(false);
   const [settingsOptions, setSettingsOptions] = useState<SettingsOpenOptions>({});
-  const [mainView, setMainView] = useState<'cowork' | 'skills' | 'scheduledTasks' | 'mcp' | 'agents'>('cowork');
+
   const [isInitialized, setIsInitialized] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -67,7 +67,7 @@ const App: React.FC<AppProps> = ({ onClose }) => {
   const hasInitialized = useRef(false);
   const dispatch = useDispatch();
   const selectedModel = useSelector((state: RootState) => state.model.selectedModel);
-  const currentSessionId = useSelector(selectCurrentSessionId);
+
   const pendingPermission = useSelector(selectFirstPendingPermission);
   const isWindows = api.platform === 'win32';
 
@@ -276,7 +276,6 @@ const App: React.FC<AppProps> = ({ onClose }) => {
     setShowSkillsModal(true);
     setShowMcpModal(false);
     setShowAgentsModal(false);
-    setMainView('cowork');
   }, []);
 
   const handleShowCowork = useCallback(() => {
@@ -284,7 +283,6 @@ const App: React.FC<AppProps> = ({ onClose }) => {
     setShowSkillsModal(false);
     setShowMcpModal(false);
     setShowAgentsModal(false);
-    setMainView('cowork');
   }, []);
 
   const handleShowScheduledTasks = useCallback(() => {
@@ -313,24 +311,21 @@ const App: React.FC<AppProps> = ({ onClose }) => {
   }, []);
 
   const handleNewChat = useCallback(() => {
-    const shouldClearInput = mainView === 'cowork' || !!currentSessionId;
     coworkService.clearSession();
     dispatch(clearSelection());
     setShowScheduledTasksModal(false);
     setShowSkillsModal(false);
     setShowMcpModal(false);
     setShowAgentsModal(false);
-    setMainView('cowork');
     window.setTimeout(() => {
       window.dispatchEvent(new CustomEvent('cowork:focus-input', {
-        detail: { clear: shouldClearInput },
+        detail: { clear: true },
       }));
     }, 0);
-  }, [dispatch, mainView, currentSessionId]);
+  }, [dispatch]);
 
   const handleSelectSession = useCallback((sessionId: string) => {
     void coworkService.loadSession(sessionId);
-    setMainView('cowork');
   }, []);
 
   const handleDeleteSession = useCallback(async (sessionId: string) => {
@@ -349,7 +344,6 @@ const App: React.FC<AppProps> = ({ onClose }) => {
     dispatch(setDraftPrompt({ sessionId: '__home__', draft: i18nService.t('skillCreatorPrompt') }));
     coworkService.clearSession();
     dispatch(clearSelection());
-    setMainView('cowork');
   }, [dispatch]);
 
   const showToast = useCallback((message: string) => {
@@ -577,7 +571,16 @@ const App: React.FC<AppProps> = ({ onClose }) => {
         <div
           className="RightHeader flex items-center justify-between px-4 py-2"
         >
-          <div>OpenClaw</div>
+          <div className='flex items-center gap-4'>
+            <img src={OpenClawIcon} alt="logo" className='w-[36px] h-[36px] rounded-full' />
+            <div className='flex flex-col'>
+              <span className='text-[16px] font-bold text-[#003366]'>TelyClaw</span>
+              <div className='flex items-center gap-2'>
+                <p className='w-[8px] h-[8px] rounded-full bg-[#22C55E]'></p>
+                <p className='text-[12px] text-[#707579]'>AI ASSISTANT</p>
+              </div>
+            </div>
+          </div>
           <div className='flex gap-2 items-center'>
             <button className="p-1 text-secondary hover:text-foreground rounded-md hover:bg-surface-raised" onClick={handleNewChat}>
               <ComposeIcon className="h-5 w-5" />
@@ -589,7 +592,6 @@ const App: React.FC<AppProps> = ({ onClose }) => {
               onRenameSession={handleRenameSession}
             />
             <HeaderMenuPopover
-              activeView={mainView}
               onShowScheduledTasks={handleShowScheduledTasks}
               onShowSkills={handleShowSkills}
               onShowMcp={handleShowMcp}
@@ -606,32 +608,16 @@ const App: React.FC<AppProps> = ({ onClose }) => {
           </div>
         </div>
         <div className="flex flex-1 min-h-0 overflow-hidden">
-          {/* <Sidebar
-            onShowLogin={handleShowLogin}
-            onShowSettings={handleShowSettings}
-            activeView={mainView}
-            onShowSkills={handleShowSkills}
-            onShowCowork={handleShowCowork}
-            onShowScheduledTasks={handleShowScheduledTasks}
-            onShowMcp={handleShowMcp}
-            onShowAgents={handleShowAgents}
-            onNewChat={handleNewChat}
-            isCollapsed={isSidebarCollapsed}
-            onToggleCollapse={handleToggleSidebar}
-            hideLogin={enterpriseConfig?.ui?.login === 'hide'}
-          /> */}
-          <div className={`flex-1 min-w-0 py-1.5 pr-1.5 ${isSidebarCollapsed ? 'pl-1.5' : ''}`}>
-            <div className="relative h-full min-h-0 rounded-xl bg-background overflow-hidden">
+          <div className={`flex-1 min-w-0 ${isSidebarCollapsed ? 'pl-1.5' : ''}`}>
+            <div className="relative h-full min-h-0 bg-background overflow-hidden">
               <EngineStartupOverlay />
-              {mainView === 'skills' ? null : (
-                <CoworkView
-                  onRequestAppSettings={handleShowSettings}
-                  onShowSkills={handleShowSkills}
-                  isSidebarCollapsed={isSidebarCollapsed}
-                  onToggleSidebar={handleToggleSidebar}
-                  onNewChat={handleNewChat}
-                />
-              )}
+              <CoworkView
+                onRequestAppSettings={handleShowSettings}
+                onShowSkills={handleShowSkills}
+                isSidebarCollapsed={isSidebarCollapsed}
+                onToggleSidebar={handleToggleSidebar}
+                onNewChat={handleNewChat}
+              />
             </div>
           </div>
         </div>

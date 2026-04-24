@@ -1178,7 +1178,7 @@ export const UserMessageItem: React.FC<{
 
   return (
     <div
-      className="py-2 px-4"
+      className="py-2"
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
@@ -1495,7 +1495,7 @@ export const AssistantTurnBlock: React.FC<{
     <div className="px-4 py-2">
       <div className="max-w-3xl mx-auto">
         <div className="flex items-start gap-3">
-          <div className="flex-1 min-w-0 px-4 py-3 space-y-3">
+          <div className="flex-1 min-w-0 py-3 space-y-3">
             {visibleAssistantItems.map((item, index) => {
               if (item.type === 'assistant') {
                 if (item.message.metadata?.isThinking) {
@@ -2355,7 +2355,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   return (
     <div ref={detailRootRef} className="flex-1 flex flex-col bg-background h-full">
       {/* Header */}
-      <div className="draggable flex h-12 items-center justify-between px-4 border-b border-border bg-surface shrink-0">
+      <div className="flex h-12 items-center justify-between px-4 border-b border-t border-border bg-surface shrink-0">
         {/* Left side: Toggle buttons (when collapsed) + Title */}
         <div className="flex h-full items-center gap-2 min-w-0">
           {isSidebarCollapsed && (

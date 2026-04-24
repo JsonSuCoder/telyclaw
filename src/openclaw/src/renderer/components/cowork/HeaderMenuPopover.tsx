@@ -8,10 +8,7 @@ import XMarkIcon from '../icons/XMarkIcon';
 import { i18nService } from '../../services/i18n';
 import EllipsisHorizontalIcon from '../icons/EllipsisHorizontalIcon';
 
-type HeaderMenuView = 'scheduledTasks' | 'skills' | 'mcp' | 'agents';
-
 interface HeaderMenuPopoverProps {
-  activeView: HeaderMenuView | 'cowork';
   onShowScheduledTasks: () => void;
   onShowSkills: () => void;
   onShowMcp: () => void;
@@ -20,7 +17,6 @@ interface HeaderMenuPopoverProps {
 }
 
 const HeaderMenuPopover: React.FC<HeaderMenuPopoverProps> = ({
-  activeView,
   onShowScheduledTasks,
   onShowSkills,
   onShowMcp,
@@ -51,10 +47,7 @@ const HeaderMenuPopover: React.FC<HeaderMenuPopoverProps> = ({
     setIsOpen(false);
   };
 
-  const menuItemClassName = (view: HeaderMenuView) => `w-full inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors ${activeView === view
-    ? 'bg-primary/10 text-primary hover:bg-primary/20'
-    : 'text-secondary hover:text-foreground hover:bg-surface-raised'
-    }`;
+  const menuItemClassName = 'w-full inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors text-secondary hover:text-foreground hover:bg-surface-raised';
 
   return (
     <div className="relative">
@@ -76,7 +69,7 @@ const HeaderMenuPopover: React.FC<HeaderMenuPopoverProps> = ({
             <button
               type="button"
               onClick={() => handleSelect(onShowScheduledTasks)}
-              className={menuItemClassName('scheduledTasks')}
+              className={menuItemClassName}
             >
               <ClockIcon className="h-4 w-4" />
               {i18nService.t('scheduledTasks')}
@@ -84,7 +77,7 @@ const HeaderMenuPopover: React.FC<HeaderMenuPopoverProps> = ({
             <button
               type="button"
               onClick={() => handleSelect(onShowSkills)}
-              className={menuItemClassName('skills')}
+              className={menuItemClassName}
             >
               <PuzzleIcon className="h-4 w-4" />
               {i18nService.t('skills')}
@@ -92,7 +85,7 @@ const HeaderMenuPopover: React.FC<HeaderMenuPopoverProps> = ({
             <button
               type="button"
               onClick={() => handleSelect(onShowMcp)}
-              className={menuItemClassName('mcp')}
+              className={menuItemClassName}
             >
               <ConnectorIcon className="h-4 w-4" />
               {i18nService.t('mcpServers')}
@@ -100,7 +93,7 @@ const HeaderMenuPopover: React.FC<HeaderMenuPopoverProps> = ({
             <button
               type="button"
               onClick={() => handleSelect(onShowAgents)}
-              className={menuItemClassName('agents')}
+              className={menuItemClassName}
             >
               <PuzzleIcon className="h-4 w-4" />
               {i18nService.t('myAgents')}

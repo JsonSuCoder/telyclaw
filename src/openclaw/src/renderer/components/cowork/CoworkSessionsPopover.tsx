@@ -77,6 +77,7 @@ const CoworkSessionsPopover: React.FC<CoworkSessionsPopoverProps> = ({
       </button>
       {isOpen && (
         <div
+          ref={popoverRef}
           className="absolute right-0 top-full z-50 mt-2 w-80 rounded-xl border border-border bg-surface shadow-popover popover-enter overflow-hidden"
         >
           <div className="max-h-[28rem] overflow-y-auto p-2">

@@ -26,7 +26,7 @@ import WindowTitleBar from '../window/WindowTitleBar';
 import { resolveAgentModelSelection } from './agentModelSelection';
 import CoworkPromptInput, { type CoworkPromptInputRef } from './CoworkPromptInput';
 import CoworkSessionDetail from './CoworkSessionDetail';
-import LogoIcon from '../../../../public/logo.png'
+import LogoIcon from '../../../../../assets/openclaw-logo.png';
 
 export interface CoworkViewProps {
   onRequestAppSettings?: (options?: SettingsOpenOptions) => void;
@@ -479,7 +479,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
     : true;
 
   const homeHeader = (
-    <div className="draggable flex h-12 items-center justify-between px-4 border-b border-border shrink-0">
+    <div className="flex h-12 items-center justify-between px-4 border-b border-t border-border shrink-0">
       <div className="non-draggable h-8 flex items-center">
         {isSidebarCollapsed && (
           <div className={`flex items-center gap-1 mr-2 ${isMac ? 'pl-[68px]' : ''}`}>
@@ -543,7 +543,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
   if (currentSession) {
     return (
       <div className="flex-1 flex flex-col h-full">
-        {engineStatusBanner}
+        {/* {engineStatusBanner} */}
         <CoworkSessionDetail
           onManageSkills={() => onShowSkills?.()}
           onContinue={handleContinueSession}
@@ -563,8 +563,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
   return (
     <div className="flex-1 flex flex-col bg-background h-full">
       {/* Engine status banner for error states */}
-      {engineStatusBanner}
-
+      {/* {engineStatusBanner} */}
       {/* Header */}
       {homeHeader}
 

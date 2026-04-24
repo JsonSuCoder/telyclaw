@@ -24,6 +24,7 @@ import { ActiveSkillBadge,SkillsButton } from '../skills';
 import { resolveAgentModelSelection } from './agentModelSelection';
 import AttachmentCard from './AttachmentCard';
 import FolderSelectorPopover from './FolderSelectorPopover';
+import MentionPopover, { type MentionItem, type MentionTrigger } from './MentionPopover';
 
 // CoworkAttachment is aliased from the Redux-persisted DraftAttachment type
 // so that attachment state survives view switches (cowork ↔ skills, etc.)
@@ -150,6 +151,12 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const [isAddingFile, setIsAddingFile] = useState(false);
     const [imageVisionHint, setImageVisionHint] = useState(false);
 
+    const [mentionTrigger, setMentionTrigger] = useState<MentionTrigger | null>(null);
+    const [mentionQuery, setMentionQuery] = useState('');
+    const [mentionStartPos, setMentionStartPos] = useState(-1);
+    const [cursorPosition, setCursorPosition] = useState(0);
+    const [mentions, setMentions] = useState<MentionItem[]>([]);
+
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const folderButtonRef = useRef<HTMLButtonElement>(null);
     const dragDepthRef = useRef(0);
@@ -267,6 +274,75 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     }
   }, [value, draftPrompt, dispatch, draftKey]);
 
+  const handleChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const newValue = e.target.value;
+    setValue(newValue);
+
+    // Detect mention trigger (@contacts, #chats)
+    const cursorPos = e.target.selectionStart ?? newValue.length;
+    setCursorPosition(cursorPos);
+    const textBeforeCursor = newValue.slice(0, cursorPos);
+
+    // Find the last unmatched trigger character before cursor
+    const lastAt = textBeforeCursor.lastIndexOf('@');
+    const lastHash = textBeforeCursor.lastIndexOf('#');
+    const triggerPos = Math.max(lastAt, lastHash);
+
+    if (triggerPos >= 0) {
+      // Ensure trigger is at start or preceded by whitespace
+      const charBefore = triggerPos > 0 ? textBeforeCursor[triggerPos - 1] : ' ';
+      if (charBefore === ' ' || charBefore === '\n' || triggerPos === 0) {
+        const query = textBeforeCursor.slice(triggerPos + 1);
+        // Only activate if query has no spaces (still typing the mention)
+        if (!query.includes(' ') && !query.includes('\n')) {
+          const trigger: MentionTrigger = triggerPos === lastAt ? '@' : '#';
+          setMentionTrigger(trigger);
+          setMentionQuery(query);
+          setMentionStartPos(triggerPos);
+          return;
+        }
+      }
+    }
+
+    // No active mention
+    setMentionTrigger(null);
+    setMentionQuery('');
+    setMentionStartPos(-1);
+  }, []);
+
+  const handleMentionSelect = useCallback((item: MentionItem) => {
+    const before = value.slice(0, mentionStartPos);
+    const after = value.slice(mentionStartPos + 1 + mentionQuery.length);
+    const triggerChar = mentionTrigger === '@' ? '@' : '#';
+    const insertText = `${triggerChar}${item.label} `;
+    const newValue = before + insertText + after;
+    setValue(newValue);
+
+    // Track this mention for submit-time enrichment
+    setMentions((prev) => [...prev, item]);
+
+    // Reset mention state
+    setMentionTrigger(null);
+    setMentionQuery('');
+    setMentionStartPos(-1);
+
+    // Restore focus and cursor position
+    requestAnimationFrame(() => {
+      const textarea = textareaRef.current;
+      if (textarea) {
+        textarea.focus();
+        const cursorPos = before.length + insertText.length;
+        textarea.setSelectionRange(cursorPos, cursorPos);
+      }
+    });
+  }, [value, mentionStartPos, mentionQuery, mentionTrigger]);
+
+  const handleMentionClose = useCallback(() => {
+    setMentionTrigger(null);
+    setMentionQuery('');
+    setMentionStartPos(-1);
+  }, []);
+
   const handleSubmit = useCallback(async () => {
     if (showFolderSelector && !workingDirectory?.trim()) {
       setShowFolderRequiredWarning(true);
@@ -281,6 +357,16 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const trimmedValue = value.trim();
     if ((!trimmedValue && attachments.length === 0) || isStreaming || disabled) return;
     setShowFolderRequiredWarning(false);
+
+    // Enrich mentions: replace @label / #label with @[label](user:id) / #[label](chat:id)
+    let enrichedValue = trimmedValue;
+    for (const m of mentions) {
+      const trigger = m.trigger;
+      const prefix = trigger === '@' ? 'user' : 'chat';
+      const displayText = `${trigger}${m.label}`;
+      const richText = `${trigger}[${m.label}](${prefix}:${m.id})`;
+      enrichedValue = enrichedValue.replace(displayText, richText);
+    }
 
     // Get active skills prompts and combine them
     const activeSkills = activeSkillIds
@@ -313,8 +399,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       .filter((a) => !a.path.startsWith('inline:'))
       .map((attachment) => `${i18nService.t('inputFileLabel')}: ${attachment.path}`)
       .join('\n');
-    const finalPrompt = trimmedValue
-      ? (attachmentLines ? `${trimmedValue}\n\n${attachmentLines}` : trimmedValue)
+    const finalPrompt = enrichedValue
+      ? (attachmentLines ? `${enrichedValue}\n\n${attachmentLines}` : enrichedValue)
       : attachmentLines;
 
     if (imageAtts.length > 0) {
@@ -327,10 +413,11 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const result = await onSubmit(finalPrompt, skillPrompt, imageAtts.length > 0 ? imageAtts : undefined);
     if (result === false) return;
     setValue('');
+    setMentions([]);
     dispatch(setDraftPrompt({ sessionId: draftKey, draft: '' }));
     dispatch(clearDraftAttachments(draftKey));
     setImageVisionHint(false);
-  }, [value, isStreaming, disabled, onSubmit, activeSkillIds, skills, attachments, showFolderSelector, workingDirectory, dispatch, draftKey]);
+  }, [value, isStreaming, disabled, onSubmit, activeSkillIds, skills, attachments, showFolderSelector, workingDirectory, dispatch, draftKey, mentions]);
 
   const handleSelectSkill = useCallback((skill: Skill) => {
     dispatch(toggleActiveSkill(skill.id));
@@ -345,6 +432,11 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     const isComposing = event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229;
     if (event.key !== 'Enter' || isComposing) return;
+
+    // When mention popover is open, let MentionPopover handle Enter/arrow keys
+    if (mentionTrigger) {
+      return;
+    }
 
     // Use synced state (kept up-to-date via config-updated event) so that
     // changes made in the Settings panel are reflected immediately without
@@ -777,6 +869,14 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
       >
+        <MentionPopover
+          trigger={mentionTrigger}
+          query={mentionQuery}
+          onSelect={handleMentionSelect}
+          onClose={handleMentionClose}
+          anchorRef={textareaRef}
+          cursorPosition={cursorPosition}
+        />
         {isDraggingFiles && (
           <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-[inherit] bg-primary/10 text-xs font-medium text-primary">
             {i18nService.t('coworkDropFileHint')}
@@ -787,7 +887,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             <textarea
               ref={textareaRef}
               value={value}
-              onChange={(e) => setValue(e.target.value)}
+              onChange={handleChange}
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
               placeholder={placeholder}
@@ -930,7 +1030,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             <textarea
               ref={textareaRef}
               value={value}
-              onChange={(e) => setValue(e.target.value)}
+              onChange={handleChange}
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
               placeholder={placeholder}
